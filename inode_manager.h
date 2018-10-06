@@ -15,35 +15,41 @@ typedef uint32_t blockid_t;
 // disk layer -----------------------------------------
 
 class disk {
- private:
-  unsigned char blocks[BLOCK_NUM][BLOCK_SIZE];
+private:
+    unsigned char blocks[BLOCK_NUM][BLOCK_SIZE];
 
- public:
-  disk();
-  void read_block(uint32_t id, char *buf);
-  void write_block(uint32_t id, const char *buf);
+public:
+    disk();
+
+    void read_block(uint32_t id, char *buf);
+
+    void write_block(uint32_t id, const char *buf);
 };
 
 // block layer -----------------------------------------
 
 typedef struct superblock {
-  uint32_t size;
-  uint32_t nblocks;
-  uint32_t ninodes;
+    uint32_t size;
+    uint32_t nblocks;
+    uint32_t ninodes;
 } superblock_t;
 
 class block_manager {
- private:
-  disk *d;
-  std::map <uint32_t, int> using_blocks;
- public:
-  block_manager();
-  struct superblock sb;
+private:
+    disk *d;
+    std::map<uint32_t, int> using_blocks;
+public:
+    block_manager();
 
-  uint32_t alloc_block();
-  void free_block(uint32_t id);
-  void read_block(uint32_t id, char *buf);
-  void write_block(uint32_t id, const char *buf);
+    struct superblock sb;
+
+    uint32_t alloc_block();
+
+    void free_block(uint32_t id);
+
+    void read_block(uint32_t id, char *buf);
+
+    void write_block(uint32_t id, const char *buf);
 };
 
 // inode layer -----------------------------------------
@@ -68,29 +74,39 @@ class block_manager {
 #define MAXFILE (NDIRECT + NINDIRECT)
 
 typedef struct inode {
-  short type;
-  unsigned int size;
-  unsigned int atime;
-  unsigned int mtime;
-  unsigned int ctime;
-  blockid_t blocks[NDIRECT+1];   // Data block addresses
+    short type;
+    unsigned int size;
+    unsigned int atime;
+    unsigned int mtime;
+    unsigned int ctime;
+    blockid_t blocks[NDIRECT + 1];   // Data block addresses
 } inode_t;
 
 class inode_manager {
- private:
-  block_manager *bm;
-  struct inode* get_inode(uint32_t inum);
-  void put_inode(uint32_t inum, struct inode *ino);
+private:
+    block_manager *bm;
 
- public:
-  inode_manager();
-  uint32_t alloc_inode(uint32_t type);
-  void free_inode(uint32_t inum);
-  void read_file(uint32_t inum, char **buf, int *size);
-  void write_file(uint32_t inum, const char *buf, int size);
-  void remove_file(uint32_t inum);
-  void getattr(uint32_t inum, extent_protocol::attr &a);
+    struct inode *get_inode(uint32_t inum);
+
+    void put_inode(uint32_t inum, struct inode *ino);
+
+public:
+    inode_manager();
+
+    uint32_t alloc_inode(uint32_t type);
+
+    void free_inode(uint32_t inum);
+
+    void read_file(uint32_t inum, char **buf, int *size);
+
+    void write_file(uint32_t inum, const char *buf, int size);
+
+    void remove_file(uint32_t inum);
+
+    void getattr(uint32_t inum, extent_protocol::attr &a);
+
 };
 
 #endif
+
 

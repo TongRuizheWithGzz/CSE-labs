@@ -16,7 +16,7 @@ void Pthread_cond_signal(pthread_cond_t *cond);
 
 lock_server::lock_server() :
         nacquire(0) {
-    lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_init(&lock, NULL);
 
 
 }
@@ -38,7 +38,7 @@ lock_server::acquire(int clt, lock_protocol::lockid_t lid, int &r) {
 
     if (lock_state.find(lid) == lock_state.end()) {
         pthread_cond_t *init = new pthread_cond_t;
-        *init = PTHREAD_COND_INITIALIZER;
+        pthread_cond_init(init, NULL);
         cond_vars[lid] = init;
         lock_state[lid] = 1;
         Pthread_mutex_unlock(&lock);

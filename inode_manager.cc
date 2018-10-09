@@ -98,6 +98,9 @@ block_manager::alloc_block() {
     }
     printf("],");
 #endif
+    pthread_mutex_lock(&block_lock);
+    int found = 0;
+    blockid_t rv;
     start = IBLOCK(INODE_NUM, sb.nblocks) + 1;
     for (; start < BLOCK_NUM; start++) {
 
@@ -107,15 +110,21 @@ block_manager::alloc_block() {
 #ifdef _DEBUG_PART2_E
             printf("{%d}\n", start);
 #endif
-            return start;
+            rv = start;
+            found = 1;
+            break;
+
         }
     }
+    if (!found) {
+        pthread_mutex_unlock(&block_lock);
+        // Control flow could't reach here except that blocks are run out of.
+        debug_log("block_manager::alloc_block error: Blocks are run out of.\n");
+        exit(0);
+    }
 
-    // Control flow could't reach here except that blocks are run out of.
-    debug_log("block_manager::alloc_block error: Blocks are run out of.\n");
-    exit(0);
-
-    return 0;
+    pthread_mutex_unlock(&block_lock);
+    return rv;
 }
 
 void
@@ -124,11 +133,14 @@ block_manager::free_block(uint32_t id) {
      * your code goes here.
      * note: you should unmark the corresponding bit in the block bitmap when free.
      */
+    pthread_mutex_lock(&block_lock);
 
     if (using_blocks[id] == 0) {
+        pthread_mutex_unlock(&block_lock);
         debug_log("bm::free_block ERROR: free unused block, will exit\n");
         exit(0);
     }
+    pthread_mutex_unlock(&block_lock);
 
     using_blocks[id] = 0;
     return;
@@ -139,6 +151,7 @@ block_manager::free_block(uint32_t id) {
 block_manager::block_manager() {
     d = new disk();
 
+    pthread_mutex_init(&block_lock, NULL);
     // format the disk
     sb.size = BLOCK_SIZE * BLOCK_NUM;
     sb.nblocks = BLOCK_NUM;
@@ -160,6 +173,8 @@ block_manager::write_block(uint32_t id, const char *buf) {
 
 inode_manager::inode_manager() {
     bm = new block_manager();
+    pthread_mutex_init(&inode_table_lock, NULL);
+
     uint32_t root_dir = alloc_inode(extent_protocol::T_DIR);
     if (root_dir != 1) {
         printf("\tim: error! alloc first inode %d, should be 1\n", root_dir);
@@ -176,12 +191,15 @@ inode_manager::alloc_inode(uint32_t type) {
      * note: the normal inode block should begin from the 2nd inode block.
      * the 1st is used for root_dir, see inode_manager::inode_manager().
      */
-
+    pthread_mutex_lock(&inode_table_lock);
     //store the block fetched from the disk
     char buf[BLOCK_SIZE];
 
+    int found = 0;
+    uint32_t inum;
+
     //bypass the first root inode
-    for (uint32_t inum = 1; inum <= INODE_NUM; inum++) {
+    for (inum = 1; inum <= INODE_NUM; inum++) {
         bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
         struct inode *ino = (struct inode *) buf + inum % IPB; //fetch the ino
         if (ino->type == 0) {
@@ -192,13 +210,17 @@ inode_manager::alloc_inode(uint32_t type) {
             ino->ctime = (unsigned) std::time(0);
 
             put_inode(inum, ino);
-            return inum;
+            found = 1;
+            break;
         }
     }
-
-    debug_log("im::alloc_inode ERROR: cannot allocate inode, will exit\n");
-    exit(0);
-    return 1;
+    if (!found) {
+        pthread_mutex_unlock(&inode_table_lock);
+        debug_log("im::alloc_inode ERROR: cannot allocate inode, will exit\n");
+        exit(0);
+    }
+    pthread_mutex_unlock(&inode_table_lock);
+    return inum;
 }
 
 void
@@ -208,21 +230,25 @@ inode_manager::free_inode(uint32_t inum) {
      * note: you need to check if the inode is already a freed one;
      * if not, clear it, and remember to write back to disk.
      */
+    pthread_mutex_lock(&inode_table_lock);
     struct inode *ino = get_inode(inum);
     if (!ino) {
         debug_log("im::free_inode ERROR: inode returned by get_inode() is NULL, will exit\n");
+        pthread_mutex_unlock(&inode_table_lock);
         exit(0);
     }
 
     //The inode is already a freed on
     if (ino->type == 0) {
         debug_log("im::free_inode WARNING: the inode is already a freed one\n");
+        pthread_mutex_unlock(&inode_table_lock);
         return;
     }
 
     ino->type = 0;
     put_inode(inum, ino);
     free(ino);
+    pthread_mutex_unlock(&inode_table_lock);
     return;
 }
 

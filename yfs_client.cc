@@ -176,6 +176,7 @@ yfs_client::setattr(inum ino, size_t size) {
      */
 
     std::string buf;
+    lc->acquire(ino);
     r = ec->get(ino, buf);
     if (r != OK) {
         printf("setattr: file not exist\n");
@@ -189,6 +190,7 @@ yfs_client::setattr(inum ino, size_t size) {
         printf("setattr: update failed\n");
         return r;
     }
+    lc->release(ino);
 
     return r;
 }
@@ -196,16 +198,12 @@ yfs_client::setattr(inum ino, size_t size) {
 int
 yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out) {
 
-#ifdef _DEBUG_PART2_A
-    debug_log("====== CREATE FILE ==========\n");
-    debug_log("yc::create,try to create->{parent:%llu, name:%s}\n", parent, name);
-#endif
-
 
     int r = OK;
 
     //file name length shouldn't be longer than MAX_FILENAME_LENGTH
     assert(strlen(name) <= MAX_FILENAME_LENGTH);
+
     /*
      * your code goes here.
      * note: lookup is what you need to check if file exist;
@@ -213,41 +211,30 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out) {
      */
 
     bool found;
-    lookup(parent, name, found, ino_out);
-    if (found)
+
+    lc->acquire(parent);
+
+    __lookup_dir(parent, name, found, ino_out);
+    if (found) {
+        lc->release(parent);
         return EXIST;
+    }
 
 
     ec->create(extent_protocol::T_FILE, ino_out);
     //TODO :set attribute of this file
-
-#ifdef _DEBUG_PART2_A
-    extent_protocol::attr a;
-#endif
-
-#ifdef _DEBUG_PART2_A
-    ec->getattr(ino_out, a);
-    assert(a.type == extent_protocol::T_FILE);
-    assert(a.size == 0);
-#endif
-
 
     std::string buf;
     std::string append;
 
     // Assume the parent exists, or else exit
     if (ec->get(parent, buf) != extent_protocol::OK) {
+        lc->release(parent);
         debug_log("yc::create ERROR: ec->get(parent,buf) error, will exit\n");
         exit(0);
         return IOERR;
     }
 
-#ifdef _DEBUG_PART2_A
-    ec->getattr(parent, a);
-    unsigned int parent_original_size = a.size;
-    assert(a.type == extent_protocol::T_DIR);
-    assert(buf.size() == parent_original_size);
-#endif
 
     struct dir_entry new_dirent;
     new_dirent.inum = ino_out;
@@ -270,28 +257,8 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out) {
 
     ec->put(parent, buf);
 
-#ifdef _DEBUG_PART2_A
-    ec->getattr(parent, a);
-    assert(a.size == (parent_original_size + sizeof(struct dir_entry)));
-#endif
 
-#ifdef _DEBUG_PART2_A
-    std::string __parent;
-    inum retrive_inum;
-    debug_log("\t\t ~~~~~ RETRIEVE PARENT FOR CHECKING ~~~\t\t\n");
-    ec->get(parent, __parent);
-
-    assert(__parent.size() == a.size);
-
-    lookup(parent, name, found, retrive_inum);
-
-
-    assert(found);
-
-    debug_log("\t\t ~~~~~ END RETRIEVE ~~~~~\t\t\n");
-    debug_log("===== CREATE FILE END =====\n\n");
-
-#endif
+    lc->release(parent);
     return r;
 
 }
@@ -309,7 +276,9 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out) {
      */
 
     bool found;
-    lookup(parent, name, found, ino_out);
+
+    lc->acquire(parent);
+    __lookup_dir(parent, name, found, ino_out);
     if (found)
         return EXIST;
 
@@ -317,6 +286,7 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out) {
 
     // Assume the parent exists, or else exit
     if (ec->get(parent, buf) != extent_protocol::OK) {
+        lc->release(parent);
         debug_log("yc::create ERROR: ec->get(parent,buf) error, will exit\n");
         exit(0);
         return IOERR;
@@ -339,45 +309,25 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out) {
     append.assign((char *) (&dirent), sizeof(struct dir_entry));
     buf += append;
     ec->put(parent, buf);
+    lc->release(parent);
     return r;
 }
 
 int
 yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out) {
 
+
     /*
      * your code goes here.
      * note: lookup file from parent dir according to name;
      * you should design the format of directory content.
      */
-#ifdef _DEBUG_PART2_A
-    debug_log("yc::lookup: try to find-> {parent:%llu, name:%s}\n", parent, name);
-#endif
-    int r = OK;
-    std::list<dirent> entries;
 
-    //If readdir() fails, the program will exit
-    //So error handling is unnecessary here
-    readdir(parent, entries);
-
-    std::string string_name;
-    while (entries.size() != 0) {
-        dirent dir_ent = entries.front();
-        entries.pop_front();
-
-#ifdef _DEBUG_PART2_A
-        debug_log("yc::lookup: find an entry-> {inum:%llu, name:%s}\n", dir_ent.inum, dir_ent.name.c_str());
-#endif
-
-        if (dir_ent.name == string_name.assign(name, strlen(name))) {
-            found = true;
-            ino_out = dir_ent.inum;
-            return r;
-        }
-    }
-
-    found = false;
+    lc->acquire(parent);
+    int r = __lookup_dir(parent, name, found, ino_out);
+    lc->release(parent);
     return r;
+
 }
 
 int
@@ -388,77 +338,32 @@ yfs_client::readdir(inum dir, std::list<dirent> &list) {
      * and push the dirents to the list.
      */
     int r = OK;
-    std::string buf;
+    std::list<dir_entry> entries;
 
-    //the dir's attribute stored in inode
-    extent_protocol::attr attr;
+    lc->acquire(dir);
+    __list_dir(dir, entries);
+    lc->release(dir);
 
-
-
-
-    // Assume the dir exists, or else exit
-    if (ec->get(dir, buf) != extent_protocol::OK) {
-        debug_log("yc::lookup ERROR: ec->get(parent,buf) error, will exit\n");
-        exit(0);
-        return IOERR;
-    }
-
-    //If the file content can be successsfully retrieved, so does attr
-    ec->getattr(dir, attr);
-
-    // dir isn't a directory, exit!
-    if (attr.type != extent_protocol::T_DIR) {
-        debug_log("yc::lookup ERROR: dir isn't a directory, will exit\n");
-        exit(0);
-    }
-
-    //Set the access time
-    attr.atime = (unsigned int) time(0);
-    //TODO::set attribute
-
-    //The content of the directory
-    const char *cbuf = buf.c_str();
-
-    //The size of the directory
-    unsigned int size = (unsigned int) buf.size();
-
-    //the number of entries the directory contains
-    unsigned int n_entries = size / (sizeof(dir_entry));
-
-
-    //the directory file length must be aligned to sizeof(dir_entry)
-    assert(size % sizeof(dir_entry) == 0);
-
-#ifdef  _DEBUG_PART2_A
-    debug_log("yc::readdir, try to read dir[%llu], content-length[%lu], n_entries[%u]\n", dir, buf.size(), n_entries);
-
-#endif
 
     //traverse the entries in the directory
-    for (uint32_t i = 0; i < n_entries; i++) {
-        struct dir_entry dir_entry;// = ((struct dir_entry *) cbuf)[i];
+    std::list<dir_entry>::iterator it = entries.begin();
 
-        memcpy(&dir_entry, cbuf + i * sizeof(struct dir_entry), sizeof(struct dir_entry));
-
+    for (; it != entries.end(); it++) {
         struct dirent dirent;
-        dirent.inum = dir_entry.inum;
-        dirent.name.assign(dir_entry.file_name, dir_entry.file_name_length);
-
-#ifdef  _DEBUG_PART2_A
-        debug_log("yc::readdir, constructed an entry, inum[%llu], name[", dirent.inum);
-        std::cout << dirent.name << "]\n";
-
-#endif
-
+        dirent.inum = it->inum;
+        dirent.name.assign(it->file_name, it->file_name_length);
         list.push_back(dirent);
     }
+
 
     return r;
 }
 
 int
 yfs_client::read(inum ino, size_t size, off_t off, std::string &data) {
+
     int r = OK;
+    lc->acquire(ino);
 
     /*
      * your code goes here.
@@ -473,6 +378,7 @@ yfs_client::read(inum ino, size_t size, off_t off, std::string &data) {
     }
 
     data = content.substr(off, size);
+    lc->release(ino);
     return r;
 }
 
@@ -486,7 +392,7 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
      * note: write using ec->put().
      * when off > length of original file, fill the holes with '\0'.
      */
-
+    lc->acquire(ino);
     std::string content;
     ec->get(ino, content);
     std::string buf;
@@ -503,6 +409,7 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
     }
     ec->put(ino, content);
 
+    lc->release(ino);
     return r;
 }
 
@@ -518,43 +425,47 @@ int yfs_client::unlink(inum parent, const char *name) {
 
 int yfs_client::rmdir(inum parent, const char *name) {
     int r = OK;
-    std::list<dirent> dir_entries;
-    std::string string_name;
-    string_name.assign(name, strlen(name));
     bool found = false;
 
-    readdir(parent, dir_entries);
-    std::list<dirent>::iterator it = dir_entries.begin();
+    std::list<dir_entry> entries;
+    lc->acquire(parent);
+    __list_dir(parent, entries);
 
-    for (; it != dir_entries.end(); ++it) {
-        if (it->name == string_name) {
+    std::list<dir_entry>::iterator it = entries.begin();
+    for (; it != entries.end(); it++) {
+        std::string found_name;
+        found_name.assign(it->file_name, it->file_name_length);
+        if (found_name == name) {
             found = true;
             break;
         }
     }
 
-    if (!found)
+    if (!found) {
+        lc->release(parent);
         return NOENT;
+    }
 
     //erase the entry
-    dir_entries.erase(it);
+    entries.erase(it);
 
     //buf ready to be written to disk
     std::string buf;
 
 
-    for (it = dir_entries.begin(); it != dir_entries.end(); ++it) {
+    for (it = entries.begin(); it != entries.end(); ++it) {
         std::string append;
-        dir_entry dir_entry_disk;
-        dir_entry_disk.inum = it->inum;
-        dir_entry_disk.file_name_length = (unsigned short) it->name.size();
-        memcpy(dir_entry_disk.file_name, it->name.data(), dir_entry_disk.file_name_length);
+
+        dir_entry dir_entry_disk = *it;
+
         append.assign((char *) (&dir_entry_disk), sizeof(struct dir_entry));
+
         buf += append;
 
     }
 
     ec->put(parent, buf);
+    lc->release(parent);
     return r;
 }
 
@@ -562,9 +473,11 @@ int
 yfs_client::readlink(inum ino, std::string &data) {
     int r = OK;
     std::string buf;
+
+    lc->acquire(ino);
     r = ec->get(ino, buf);
     data = buf;
-
+    lc->release(ino);
     return r;
 }
 
@@ -573,12 +486,15 @@ yfs_client::symlink(inum parent, const char *name, const char *link, inum &ino_o
     int r = OK;
 
     std::string parent_content, parent_add;
+    lc->acquire(parent);
     r = ec->get(parent, parent_content);
     bool found;
     inum id;
-    lookup(parent, name, found, id);
-    if (found)
+    __lookup_dir(parent, name, found, id);
+    if (found) {
+        lc->release(parent);
         return EXIST;
+    }
 
     r = ec->create(extent_protocol::T_SYMLINK, ino_out);
     r = ec->put(ino_out, std::string(link));
@@ -592,7 +508,111 @@ yfs_client::symlink(inum parent, const char *name, const char *link, inum &ino_o
 
     parent_content += parent_add;
     ec->put(parent, parent_content);
-
+    lc->release(parent);
     return r;
 }
 
+int yfs_client::__list_dir(inum dir, std::list<dir_entry> &entries) {
+
+    int r = OK;
+
+    std::string buf;
+
+    //the dir's attribute stored in inode
+    extent_protocol::attr attr;
+
+
+    if (ec->get(dir, buf) != extent_protocol::OK) {
+        debug_log("yc::__list__dir info: ec->get(dir,buf), no such inum\n");
+        exit(0);
+    }
+    ec->getattr(dir, attr);
+
+    // dir isn't a directory, exit!
+    if (attr.type != extent_protocol::T_DIR) {
+        debug_log("yc::lookup ERROR: dir isn't a directory, will exit\n");
+        exit(0);
+    }
+
+    //The content of the directory
+    const char *cbuf = buf.c_str();
+
+    //The size of the directory
+    unsigned int size = (unsigned int) buf.size();
+
+    //the number of entries the directory contains
+    unsigned int n_entries = size / (sizeof(dir_entry));
+
+    //the directory file length must be aligned to sizeof(dir_entry)
+    assert(size % sizeof(dir_entry) == 0);
+
+    //traverse the entries in the directory
+    for (uint32_t i = 0; i < n_entries; i++) {
+        struct dir_entry dir_entry;// = ((struct dir_entry *) cbuf)[i];
+
+        memcpy(&dir_entry, cbuf + i * sizeof(struct dir_entry), sizeof(struct dir_entry));
+
+        entries.push_back(dir_entry);
+    }
+
+    return r;
+
+}
+
+
+int yfs_client::__lookup_dir(inum dir, const char *name, bool &found, inum &ino_out) {
+    int r = OK;
+
+    std::string buf;
+
+    //the dir's attribute stored in inode
+    extent_protocol::attr attr;
+
+
+    if (ec->get(dir, buf) != extent_protocol::OK) {
+        debug_log("yc::__list__dir info: ec->get(dir,buf), no such inum\n");
+        exit(0);
+    }
+
+    ec->getattr(dir, attr);
+
+    // dir isn't a directory, exit!
+    if (attr.type != extent_protocol::T_DIR) {
+        debug_log("yc::lookup ERROR: dir isn't a directory, will exit\n");
+        exit(0);
+    }
+
+    //The content of the directory
+    const char *cbuf = buf.c_str();
+
+    //The size of the directory
+    unsigned int size = (unsigned int) buf.size();
+
+    //the number of entries the directory contains
+    unsigned int n_entries = size / (sizeof(dir_entry));
+
+    //the directory file length must be aligned to sizeof(dir_entry)
+    assert(size % sizeof(dir_entry) == 0);
+
+    //traverse the entries in the directory
+    for (uint32_t i = 0; i < n_entries; i++) {
+        struct dir_entry dir_entry;// = ((struct dir_entry *) cbuf)[i];
+
+        memcpy(&dir_entry, cbuf + i * sizeof(struct dir_entry), sizeof(struct dir_entry));
+
+        std::string found_name, param_name;
+
+        found_name.assign(dir_entry.file_name, dir_entry.file_name_length);
+        param_name.assign(name, strlen(name));
+
+        if (found_name == param_name) {
+            found = true;
+            ino_out = dir_entry.inum;
+            return r;
+
+        }
+
+    }
+    found = false;
+    return r;
+}

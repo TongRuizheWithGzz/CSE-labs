@@ -23,18 +23,22 @@
     } while (0)
 
 
+yfs_client::yfs_client(std::string extent_dst, std::string lock_dst) {
+    ec = new extent_client(extent_dst);
+    lc = new lock_client(lock_dst);
 
-yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
-{
-  ec = new extent_client(extent_dst);
-  lc = new lock_client(lock_dst);
-  if (ec->put(1, "") != extent_protocol::OK)
-      printf("error init root dir\n"); // XYB: init root dir
+    //TODO: acquire(1)& release(1) seems unneccesary
+    lc->acquire(1);
+    if (ec->put(1, "") != extent_protocol::OK)
+        printf("error init root dir\n"); // XYB: init root dir
+    lc->release(1);
+
 }
 
 
 yfs_client::inum
 yfs_client::n2i(std::string n) {
+
     std::istringstream ist(n);
     unsigned long long finum;
     ist >> finum;
@@ -52,16 +56,20 @@ bool
 yfs_client::isfile(inum inum) {
     extent_protocol::attr a;
 
+    lc->acquire(inum);
+
     if (ec->getattr(inum, a) != extent_protocol::OK) {
-        printf("error getting attr\n");
+        debug_log("yc::isfile ERROR: ec->getattr(inum,a) error, will exit\n");
+        lc->release(inum);
+        exit(0);
         return false;
     }
 
-    if (a.type == extent_protocol::T_FILE) {
-        printf("isfile: %lld is a file\n", inum);
+    lc->release(inum);
+    if (a.type == extent_protocol::T_FILE)
         return true;
-    }
-    printf("isfile: %lld is not a dir\n", inum);
+
+
     return false;
 }
 
@@ -74,10 +82,15 @@ yfs_client::isfile(inum inum) {
 bool
 yfs_client::isdir(inum inum) {
     extent_protocol::attr a;
+    lc->acquire(inum);
+
     if (ec->getattr(inum, a) != extent_protocol::OK) {
-        printf("error getting attr\n");
+        debug_log("yc::isdir ERROR: ec->getattr(inum,a) error, will exit\n");
+        lc->release(inum);
+        exit(0);
         return false;
     }
+    lc->release(inum);
 
     if (a.type == extent_protocol::T_DIR) {
         printf("isfile: %lld is a dir\n", inum);
@@ -90,16 +103,17 @@ yfs_client::isdir(inum inum) {
 bool
 yfs_client::issymlink(inum inum) {
     extent_protocol::attr a;
+    lc->acquire(inum);
     if (ec->getattr(inum, a) != extent_protocol::OK) {
-        printf("error getting attr\n");
+        debug_log("yc::issymlink ERROR: ec->getattr(inum,a) error, will exit\n");
+        lc->release(inum);
+        exit(0);
         return false;
     }
-
+    lc->release(inum);
     if (a.type == extent_protocol::T_SYMLINK) {
-        printf("isfile: %lld is a symlink\n", inum);
         return true;
     }
-    printf("isfile: %lld is not a symlink\n", inum);
     return false;
 }
 
@@ -107,8 +121,7 @@ yfs_client::issymlink(inum inum) {
 int
 yfs_client::getfile(inum inum, fileinfo &fin) {
     int r = OK;
-
-    printf("getfile %016llx\n", inum);
+    lc->acquire(inum);
     extent_protocol::attr a;
     if (ec->getattr(inum, a) != extent_protocol::OK) {
         r = IOERR;
@@ -119,8 +132,8 @@ yfs_client::getfile(inum inum, fileinfo &fin) {
     fin.mtime = a.mtime;
     fin.ctime = a.ctime;
     fin.size = a.size;
-    printf("getfile %016llx -> sz %llu\n", inum, fin.size);
 
+    lc->release(inum);
     release:
     return r;
 }
@@ -128,8 +141,7 @@ yfs_client::getfile(inum inum, fileinfo &fin) {
 int
 yfs_client::getdir(inum inum, dirinfo &din) {
     int r = OK;
-
-    printf("getdir %016llx\n", inum);
+    lc->acquire(inum);
     extent_protocol::attr a;
     if (ec->getattr(inum, a) != extent_protocol::OK) {
         r = IOERR;
@@ -138,7 +150,7 @@ yfs_client::getdir(inum inum, dirinfo &din) {
     din.atime = a.atime;
     din.mtime = a.mtime;
     din.ctime = a.ctime;
-
+    lc->release(inum);
     release:
     return r;
 }

@@ -102,9 +102,11 @@ private:
 
     void __write_nth_block(struct inode *ino, uint32_t nth, std::string &);
 
-    void __alloc_nth_block(struct inode *ino, uint32_t nth, std::string &,bool);
+    void __alloc_nth_block(struct inode *ino, uint32_t nth, std::string &, bool);
 
     blockid_t __get_nth_blockid(struct inode *ino, uint32_t nth);
+
+    void __free_nth_block(struct inode *ino, uint32_t nth);
 
 public:
     inode_manager();

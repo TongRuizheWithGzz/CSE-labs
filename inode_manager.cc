@@ -34,39 +34,15 @@ disk::disk() {
 
 void
 disk::read_block(blockid_t id, char *buf) {
-
-    // buf should be allocated on stack or heap.
-    if (!buf) {
-        debug_log("disk::read_block ERROR: 2st arg buf is NULL, will exit\n");
-        exit(0);
-    }
-
-    //block id out of range
-    if (id >= BLOCK_NUM) {
-        debug_log("disk::read_block ERROR: block id out of range, will exit\n");
-        exit(0);
-    }
-
+    assert(0 <= id && id < BLOCK_NUM);
+    assert(buf);
     memcpy(buf, blocks[id], BLOCK_SIZE);
-
-
 }
 
 void
 disk::write_block(blockid_t id, const char *buf) {
-
-    //buf can not be NULL
-    if (!buf) {
-        debug_log("disk::write_block ERROR: 2st arg buf is NULL, will exit\n");
-        exit(0);
-    }
-
-    //block id out of range
-    if (id >= BLOCK_NUM) {
-        debug_log("disk::read_block ERROR: block id out of range, will exit\n");
-        exit(0);
-    }
-
+    assert(buf);
+    assert(0 <= id && id < BLOCK_NUM);
     memcpy(blocks[id], buf, BLOCK_SIZE);
 
 }
@@ -107,18 +83,8 @@ block_manager::alloc_block() {
 
 void
 block_manager::free_block(uint32_t id) {
-    /*
-     * your code goes here.
-     * note: you should unmark the corresponding bit in the block bitmap when free.
-     */
-
-    if (using_blocks[id] == 0) {
-        debug_log("bm::free_block ERROR: free unused block, will exit\n");
-        exit(0);
-    }
-
+    assert(using_blocks[id] != 0);
     using_blocks[id] = 0;
-    return;
 }
 
 // The layout of disk should be like this:
@@ -194,6 +160,7 @@ inode_manager::alloc_inode(uint32_t type) {
     ino->ctime = (unsigned) std::time(0);
     put_inode(hover, ino);
     free(ino);
+    debug_log("im::alloc_inode: allock inode[%u]\n", hover);
     return hover;
 }
 
@@ -260,33 +227,25 @@ inode_manager::put_inode(uint32_t inum, struct inode *ino) {
  * Return alloced data, should be freed by caller. */
 void
 inode_manager::read_file(uint32_t inum, char **buLf_out, int *size) {
-
     struct inode *ino = get_inode(inum);    //read the file's inode
-
     std::string content;
     *size = ino->size;
     if (ino->size == 0)
         return;
     if (ino->size > MAXFILE * BLOCK_SIZE)
         exit(0);
-
-
     uint32_t block_num = ((ino->size - 1) / BLOCK_SIZE + 1);
+//    debug_log("im::read_file: from { inum:%u, size:%d, block_num:%d}\n", inum, *size, block_num);
     char *rv = (char *) malloc(BLOCK_NUM * BLOCK_SIZE);
     assert(rv);
-
     for (uint32_t nth = 0; nth < block_num; nth++) {
         __read_nth_block(ino, nth, content);
         memcpy(rv + nth * BLOCK_SIZE, content.data(), BLOCK_SIZE);
     }
-
     *buLf_out = rv;
-
     ino->atime = (unsigned) std::time(0);
     put_inode(inum, ino);
     free(ino);
-
-
 }
 
 
@@ -295,183 +254,56 @@ void
 inode_manager::write_file(uint32_t inum, const char *buf, int size) {
 
 
-    if (size < 0) {
-        debug_log("im: write)file: the size arg < 0, will exit\n");
-        exit(0);
-    }
-
-    //read the file's inode
+    assert(size >= 0 && size <= MAXFILE * BLOCK_SIZE);
     struct inode *ino = get_inode(inum);
-    if (!ino) {
-        debug_log("im::write_file ERROR: inode returned by get_inode() is NULL, will exit\n");
-        free(ino);
-        exit(0);
-        return;
-    }
+    std::string content;
 
-    // Corner case: Size larger than MAXFILE, exit
-    if ((uint32_t) size > MAXFILE * BLOCK_SIZE) {
-        debug_log("im::write_file ERROR: size larger than MAXFILE, will exit\n");
-        free(ino);
-        exit(0);
-    }
-
-
-    debug_log("im::write_file: from { inum:%u, size:%u, type:%d, block_num:%d}, to {size:%u, block_num:%d},\n", inum,
+    debug_log("im::write_file: from { inum:%u, size:%u, type:%d, block_num:%d}, to {size:%u, block_num:%d}\n", inum,
               ino->size, ino->type,
               ino->size == 0 ? 0 : ((ino->size - 1) / BLOCK_SIZE + 1), size,
               size == 0 ? 0 : ((size - 1) / BLOCK_SIZE + 1));
 
-    //original file size
-    uint32_t original_size = ino->size;
+    uint32_t size_before = ino->size;
+    uint32_t size_after = (uint32_t) size;
 
-    //the number of blocks the file occupies
-    uint32_t block_num = original_size == 0 ? 0 : ((original_size - 1) / BLOCK_SIZE + 1);
+    uint32_t blnum_before = size_before == 0 ? 0 : ((size_before - 1) / BLOCK_SIZE + 1);
+    uint32_t blnum_after = size_after == 0 ? 0 : ((size_after - 1) / BLOCK_SIZE + 1);
 
-    //index for traverse direct blocks
-    uint32_t direct_block_index = 0;
-
-    //local variable for storing block_id
-    blockid_t blockid;
-
-    //If the inode need indirect block,
-    //left_blocks_num is the number of blocks except NINDIRECT blocks
-    uint32_t left_blocks_num = 0;
-
-    //index for traverse indirect blocks
-    uint32_t indirect_block_index = 0;
-
-    //local variable to store the indirect block_id;
-    blockid_t indirect_block_id;
-
-    //load the indirect block
-    char *indirect_block;
-
-    //size % BLOCK_SIZE if left, and the buf is cut
-    char padding_block[BLOCK_SIZE];
-
-    //free all the blocks of the file
-    for (direct_block_index = 0; direct_block_index < min(block_num, NDIRECT); direct_block_index++) {
-        blockid = ino->blocks[direct_block_index];
-#ifdef  _DEBUG_PART2_E
-        debug_log("im::write_file: FREE BLOCK[%u]\n", blockid);
-#endif
-        bm->free_block(blockid);
+    if (blnum_after < blnum_before) {
+        for (uint32_t start = blnum_after; start < blnum_before; start++)
+            __free_nth_block(ino, start);
+    } else if (blnum_after > blnum_before) {
+        for (uint32_t start = blnum_before; start < blnum_after; start++)
+            __alloc_nth_block(ino, start, content, false);
     }
-
-    //block_num > NDIRECT, indirect blocks exists
-    if (block_num > NDIRECT) {
-        left_blocks_num = block_num - NDIRECT;
-
-        //This is the indirect index block id
-        indirect_block_id = ino->blocks[NDIRECT];
-
-        //allocate memory to read the indirect index block
-        indirect_block = (char *) malloc(BLOCK_SIZE);
-        assert(indirect_block);         //check for robustness
-
-
-        bm->read_block(indirect_block_id, indirect_block);
-        for (indirect_block_index = 0; indirect_block_index < left_blocks_num; indirect_block_index++) {
-            blockid = ((blockid_t *) indirect_block)[indirect_block_index];
-#ifdef  _DEBUG_PART2_E
-            debug_log("im::write_file: FREE BLOCK[%u]\n", blockid);
-#endif
-            bm->free_block(blockid);
-        }
-#ifdef  _DEBUG_PART2_E
-        debug_log("im::write_file: FREE BLOCK[%u]\n", indirect_block_id);
-#endif
-        bm->free_block(indirect_block_id); //Remember to free the indirect index block too!
-        free(indirect_block);   // avoid memory leak
-    }
-
-
-    //update the size stored in the inode, corner cases checked
     ino->size = (unsigned int) size;
 
-    //update the block num, corner cases checked
-    block_num = (unsigned int) (size == 0 ? 0 : (size - 1) / BLOCK_SIZE + 1);
-
-
-
-//  <-------   write the data to  the blocks of the file ------->
-
-    for (direct_block_index = 0; direct_block_index < min(block_num, NDIRECT); direct_block_index++) {
-        blockid = bm->alloc_block();
-        ino->blocks[direct_block_index] = blockid;
-
-
-        //When write the last block, remember to align the buf
-        if ((direct_block_index + 1) * BLOCK_SIZE > (uint32_t) size) {
-            uint32_t padding_bytes = (direct_block_index + 1) * BLOCK_SIZE - size;
-            memcpy(padding_block, buf + direct_block_index * BLOCK_SIZE, BLOCK_SIZE - padding_bytes);
-            memset(padding_block + BLOCK_SIZE - padding_bytes, 0, padding_bytes);
-            bm->write_block(blockid, padding_block);
-            continue;
-        }
-        bm->write_block(blockid, buf + direct_block_index * BLOCK_SIZE);
-    }
-
-
-    //block_num > NDIRECT, indirect blocks exists
-    if (block_num > NDIRECT) {
-        left_blocks_num = block_num - NDIRECT;
-        indirect_block_id = bm->alloc_block();
-        ino->blocks[NDIRECT] = indirect_block_id;
-        uint32_t MAX_DIRECT_BLOCK_SIZE = NDIRECT * BLOCK_SIZE;
-        char *indirect_block = (char *) malloc(BLOCK_SIZE);
-        assert(indirect_block);
-
-        for (indirect_block_index = 0; indirect_block_index < left_blocks_num; indirect_block_index++) {
-
-            blockid = bm->alloc_block();
-            ((blockid_t *) indirect_block)[indirect_block_index] = blockid;
-
-            if ((indirect_block_index + 1) * BLOCK_SIZE + MAX_DIRECT_BLOCK_SIZE > (uint32_t) size) {
-                uint32_t padding_bytes = (indirect_block_index + 1) * BLOCK_SIZE - size + MAX_DIRECT_BLOCK_SIZE;
-                memcpy(padding_block, buf + MAX_DIRECT_BLOCK_SIZE + indirect_block_index * BLOCK_SIZE,
-                       BLOCK_SIZE - padding_bytes);
-                memset(padding_block + BLOCK_SIZE - padding_bytes, 0, padding_bytes);
-                bm->write_block(blockid, padding_block);
-                continue;
-            }
-            bm->write_block(blockid, buf + MAX_DIRECT_BLOCK_SIZE + BLOCK_SIZE * indirect_block_index);
+    if (blnum_after != 0) {
+        uint32_t start = 0;
+        for (; start + 1 < blnum_after; start++) {
+            content.assign(buf + BLOCK_SIZE * start, BLOCK_SIZE);
+            __write_nth_block(ino, start, content);
         }
 
-        bm->write_block(indirect_block_id, indirect_block);
-        free(indirect_block);   // avoid memory leak
-    }
+        uint32_t padding_bytes = blnum_after * BLOCK_SIZE - size;
+        uint32_t tail_bytes = BLOCK_SIZE - padding_bytes;
 
-    //Put the inode into disk
+        content.assign(buf + BLOCK_SIZE * start, tail_bytes);
+
+        content.resize(BLOCK_SIZE);
+
+        __write_nth_block(ino, blnum_after - 1, content);
+    }
     ino->atime = (unsigned) std::time(0);
     ino->mtime = (unsigned) std::time(0);
     ino->ctime = (unsigned) std::time(0);
-
-
     put_inode(inum, ino);
-#ifdef  _DEBUG_PART2_E
-    debug_log("===== WRITE FILE PUT INODE CHECK =====\n");
-    ino = get_inode(inum);
-    printf("The file contains blocks [");
-    for (int i = 0; i < block_num; i++) {
-        printf("%u,", ino->blocks[i]);
-    }
-    printf("]\n");
-    debug_log("===== WRITE FILE PUT INODE CHECK END=====\n");
-
-#endif
-    //REMEMBER to free the  inode allocated by get_inode
     free(ino);
 }
 
 void
 inode_manager::getattr(uint32_t inum, extent_protocol::attr &a) {
-    /*
-     * your code goes here.
-     * note: get the attributes of inode inum.
-     * you can refer to "struct attr" in extent_protocol.h
-     */
+
     struct inode *ino = get_inode(inum);
     if (!ino) {
         debug_log("im::getattr WARNING: inode %u is NULL from get inode\n", inum);
@@ -484,82 +316,24 @@ inode_manager::getattr(uint32_t inum, extent_protocol::attr &a) {
     a.ctime = ino->ctime;
     a.mtime = ino->mtime;
     a.size = ino->size;
-
-//    caller of get_inode need to fre
     free(ino);
 
 }
 
 void
 inode_manager::remove_file(uint32_t inum) {
-    /*
-     * your code goes here
-     * note: you need to consider about both the data block and inode of the file
-     */
-    //read the file's inode
+
     struct inode *ino = get_inode(inum);
-    if (!ino) {
-        debug_log("im::remove ERROR: inode returned by get_inode() is NULL, will exit\n");
-        exit(0);
-        return;
-    }
+
 
     debug_log("im::remove_file:  { size: %u, type: %d, block_num: %d}\n", ino->size, ino->type,
               ino->size == 0 ? 0 : ((ino->size - 1) / BLOCK_SIZE + 1));
 
-    //original file size
     uint32_t size = ino->size;
-
-    //the number of blocks the file occupies
     uint32_t block_num = size == 0 ? 0 : ((size - 1) / BLOCK_SIZE + 1);
 
-
-    //index for traverse direct blocks
-    uint32_t direct_block_index = 0;
-
-    //local variable for storing block_id
-    blockid_t blockid;
-
-    //If the inode need indirect block,
-    //left_blocks_num is the number of blocks except NINDIRECT blocks
-    uint32_t left_blocks_num = 0;
-
-    //index for traverse indirect blocks
-    uint32_t indirect_block_index = 0;
-
-    //local variable to store the indirect block_id;
-    blockid_t indirect_block_id;
-
-    //load the indirect block
-    char *indirect_block;
-
-
-    //free all the blocks of the file
-    for (direct_block_index = 0; direct_block_index < min(block_num, NDIRECT); direct_block_index++) {
-        blockid = ino->blocks[direct_block_index];
-        bm->free_block(blockid);
-    }
-
-    //block_num > NDIRECT, indirect blocks exists
-    if (block_num > NDIRECT) {
-        left_blocks_num = block_num - NDIRECT;
-
-        //This is the indirect index block id
-        indirect_block_id = ino->blocks[NDIRECT];
-
-        //allocate memory to read the indirect index block
-        indirect_block = (char *) malloc(BLOCK_SIZE);
-        assert(indirect_block);         //check for robustness
-
-
-        bm->read_block(indirect_block_id, indirect_block);
-        for (indirect_block_index = 0; indirect_block_index < left_blocks_num; indirect_block_index++) {
-            blockid = ((blockid_t *) indirect_block)[indirect_block_index];
-            bm->free_block(blockid);
-        }
-
-        bm->free_block(indirect_block_id); //Remember to free the indirect index block too!
-        free(indirect_block);   // avoid memory leak
+    for (uint32_t start = 0; start < block_num; start++) {
+        __free_nth_block(ino, start);
     }
 
     free_inode(inum);
@@ -590,6 +364,7 @@ void inode_manager::__write_nth_block(struct inode *ino, uint32_t nth, std::stri
 
 
 void inode_manager::__alloc_nth_block(struct inode *ino, uint32_t nth, std::string &buf, bool to_write) {
+    assert(ino);
     blockid_t bl_id = bm->alloc_block();
 
     if (to_write)
@@ -606,11 +381,13 @@ void inode_manager::__alloc_nth_block(struct inode *ino, uint32_t nth, std::stri
     }
 }
 
+
 blockid_t inode_manager::__get_nth_blockid(struct inode *ino, uint32_t nth) {
+
 
     assert(ino);
     uint32_t size = ino->size;
-    assert(size != 0);
+    assert(size != 0); //Get any block id from an empty inode is error-oriented
 
     uint32_t block_num = ((size - 1) / BLOCK_SIZE + 1);
     assert(nth < block_num);
@@ -624,6 +401,13 @@ blockid_t inode_manager::__get_nth_blockid(struct inode *ino, uint32_t nth) {
 
     return (((blockid_t *) inblock)[nth - NDIRECT]);
 
+
+}
+
+void inode_manager::__free_nth_block(struct inode *ino, uint32_t nth) {
+
+    blockid_t id = __get_nth_blockid(ino, nth);
+    bm->free_block(id);
 
 }
 

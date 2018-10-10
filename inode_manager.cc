@@ -95,6 +95,7 @@ block_manager::alloc_block() {
         int is_used = using_blocks[hover];
         if (is_used == 0) {
             using_blocks[hover] = 1;
+            next_block = (hover + 1) == BLOCK_NUM ? start : hover + 1;
             return hover;
         }
     }
@@ -184,7 +185,7 @@ inode_manager::alloc_inode(uint32_t type) {
         debug_log("im::alloc_inode ERROR: cannot allocate inode, will exit\n");
         exit(0);
     }
-    
+
     next_inum = (hover + 1) > INODE_NUM ? 2 : (hover + 1);
     ino->type = (short) type;
     ino->size = 0;
@@ -261,75 +262,28 @@ void
 inode_manager::read_file(uint32_t inum, char **buLf_out, int *size) {
 
     struct inode *ino = get_inode(inum);    //read the file's inode
-    if (!ino) {
-        debug_log("im::read_file ERROR: inode returned by get_inode() is NULL, will exit\n");
-        exit(0);
-        return;
 
-    }
-
-    //File size exceeds MAXFILE
-    if (ino->size > MAXFILE * BLOCK_SIZE) {
-        debug_log("im::read_file ERROR: File size is too large, will exit\n");
-        free(ino);
-        exit(0);
-    }
-
-
-    debug_log("im::read_file:  {inode:%u, size: %u, type: %d, block_num: %d}\n", inum, ino->size, ino->type,
-              ino->size == 0 ? 0 : ((ino->size - 1) / BLOCK_SIZE + 1));
-
-    //the block number of the file
-    uint32_t block_num = ino->size == 0 ? 0 : ((ino->size - 1) / BLOCK_SIZE + 1);
-
-    //malloc the buf, REMEMBER to free
-    char *buf = (char *) malloc(block_num * BLOCK_SIZE);
-
-    assert(buf);
-
-    //Set the size arg
+    std::string content;
     *size = ino->size;
+    if (ino->size == 0)
+        return;
+    if (ino->size > MAXFILE * BLOCK_SIZE)
+        exit(0);
 
 
-    //local variable to traverse the direct blocks
-    uint32_t direct_block_index = 0;
+    uint32_t block_num = ((ino->size - 1) / BLOCK_SIZE + 1);
+    char *rv = (char *) malloc(BLOCK_NUM * BLOCK_SIZE);
+    assert(rv);
 
-    //local variable to traverse the indirect blocks
-    uint32_t indirect_block_index = 0;
-
-    blockid_t blockid = 0;
-
-    //the indirect block
-    char indirect_block[BLOCK_SIZE];
-
-    for (direct_block_index = 0; direct_block_index < min(block_num, NDIRECT); direct_block_index++) {
-        blockid = ino->blocks[direct_block_index];
-        bm->read_block(blockid, buf + direct_block_index * BLOCK_SIZE);
+    for (uint32_t nth = 0; nth < block_num; nth++) {
+        __read_nth_block(ino, nth, content);
+        memcpy(rv + nth * BLOCK_SIZE, content.data(), BLOCK_SIZE);
     }
 
-
-    if (block_num > NDIRECT) {
-        //the number blocks indexed by indirect block
-        uint32_t left_blocks = block_num - NDIRECT;
-
-        //Get the indirect block id
-        blockid_t indirect_block_id = ino->blocks[NDIRECT];
-
-        //fetch the indirect block
-        bm->read_block(indirect_block_id, indirect_block);
-
-        for (indirect_block_index = 0; indirect_block_index < left_blocks; indirect_block_index++) {
-            blockid = ((blockid_t *) indirect_block)[indirect_block_index];
-            bm->read_block(blockid, buf + (NDIRECT + indirect_block_index) * BLOCK_SIZE);
-        }
-    }
-
-    //Reading finish, set the buf, buf should be freed by caller
-    *buLf_out = buf;
+    *buLf_out = rv;
 
     ino->atime = (unsigned) std::time(0);
     put_inode(inum, ino);
-    //Remember to free the ino. It is allocated by get_inode
     free(ino);
 
 
@@ -610,6 +564,66 @@ inode_manager::remove_file(uint32_t inum) {
 
     free_inode(inum);
     free(ino);
+
+}
+
+
+void inode_manager::__read_nth_block(struct inode *ino, uint32_t nth, std::string &buf) {
+
+    blockid_t bl_id = __get_nth_blockid(ino, nth);
+
+    char content[BLOCK_SIZE];
+
+    bm->read_block(bl_id, content);
+
+    buf.assign(content, BLOCK_SIZE);
+
+}
+
+void inode_manager::__write_nth_block(struct inode *ino, uint32_t nth, std::string &buf) {
+    blockid_t bl_id = __get_nth_blockid(ino, nth);
+
+    assert(buf.size() == BLOCK_SIZE);
+
+    bm->write_block(bl_id, buf.data());
+}
+
+
+void inode_manager::__alloc_nth_block(struct inode *ino, uint32_t nth, std::string &buf, bool to_write) {
+    blockid_t bl_id = bm->alloc_block();
+
+    if (to_write)
+        bm->write_block(bl_id, buf.data());
+
+    if (nth < NDIRECT)
+        ino->blocks[nth] = bl_id;
+    else {
+        blockid_t inblock_id = ino->blocks[NDIRECT];
+        char inblock[BLOCK_SIZE];
+        bm->read_block(inblock_id, inblock);
+        (((blockid_t *) inblock)[nth - NDIRECT]) = bl_id;
+        bm->write_block(inblock_id, inblock);
+    }
+}
+
+blockid_t inode_manager::__get_nth_blockid(struct inode *ino, uint32_t nth) {
+
+    assert(ino);
+    uint32_t size = ino->size;
+    assert(size != 0);
+
+    uint32_t block_num = ((size - 1) / BLOCK_SIZE + 1);
+    assert(nth < block_num);
+
+    if (nth < NDIRECT)
+        return ino->blocks[nth];
+
+    blockid_t inblock_id = ino->blocks[NDIRECT];
+    char inblock[BLOCK_SIZE];
+    bm->read_block(inblock_id, inblock);
+
+    return (((blockid_t *) inblock)[nth - NDIRECT]);
+
 
 }
 

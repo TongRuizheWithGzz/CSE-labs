@@ -42,6 +42,8 @@ private:
     disk *d;
 
     std::map<uint32_t, int> using_blocks;
+
+
 public:
     block_manager();
 
@@ -96,8 +98,17 @@ private:
 
     void put_inode(uint32_t inum, struct inode *ino);
 
+    void __read_nth_block(struct inode *ino, uint32_t nth, std::string &buf);
+
+    void __write_nth_block(struct inode *ino, uint32_t nth, std::string &);
+
+    void __alloc_nth_block(struct inode *ino, uint32_t nth, std::string &,bool);
+
+    blockid_t __get_nth_blockid(struct inode *ino, uint32_t nth);
+
 public:
     inode_manager();
+
 
     uint32_t alloc_inode(uint32_t type);
 

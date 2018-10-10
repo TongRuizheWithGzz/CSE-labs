@@ -4,6 +4,7 @@
 #define inode_h
 
 #include <stdint.h>
+#include <map>
 #include "extent_protocol.h" // TODO: delete it
 #include <pthread.h>
 
@@ -37,8 +38,10 @@ typedef struct superblock {
 
 class block_manager {
 private:
+    uint32_t next_block;
 
     disk *d;
+
     std::map<uint32_t, int> using_blocks;
 
     pthread_mutex_t block_lock;
@@ -89,6 +92,8 @@ typedef struct inode {
 
 class inode_manager {
 private:
+    uint32_t next_inum;
+
     block_manager *bm;
 
     struct inode *get_inode(uint32_t inum);
@@ -97,9 +102,19 @@ private:
 
     pthread_mutex_t inode_table_lock;
 
+    void __read_nth_block(struct inode *ino, uint32_t nth, std::string &buf);
+
+    void __write_nth_block(struct inode *ino, uint32_t nth, std::string &);
+
+    void __alloc_nth_block(struct inode *ino, uint32_t nth, std::string &, bool);
+
+    blockid_t __get_nth_blockid(struct inode *ino, uint32_t nth);
+
+    void __free_nth_block(struct inode *ino, uint32_t nth);
 
 public:
     inode_manager();
+
 
     uint32_t alloc_inode(uint32_t type);
 

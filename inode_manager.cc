@@ -211,11 +211,7 @@ inode_manager::put_inode(uint32_t inum, struct inode *ino) {
     char buf[BLOCK_SIZE];
     struct inode *ino_disk;
 
-    if (ino == NULL) {
-        debug_log("im::put_indoe ERROR: ino is null, will exit\n");
-        return;
-    }
-
+    assert(ino);
     bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
     ino_disk = (struct inode *) buf + inum % IPB;
     *ino_disk = *ino;
@@ -254,7 +250,7 @@ void
 inode_manager::write_file(uint32_t inum, const char *buf, int size) {
 
 
-    assert(size >= 0 && size <= MAXFILE * BLOCK_SIZE);
+    assert(size >= 0 && (uint32_t) size <= MAXFILE * BLOCK_SIZE);
     struct inode *ino = get_inode(inum);
     std::string content;
 

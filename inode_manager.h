@@ -37,7 +37,7 @@ typedef struct superblock {
 
 class block_manager {
 private:
-    uint32_t next;
+    uint32_t next_block;
 
     disk *d;
 

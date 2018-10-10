@@ -76,46 +76,32 @@ disk::write_block(blockid_t id, const char *buf) {
 // Allocate a free disk block.
 blockid_t
 block_manager::alloc_block() {
-    /*
-     * your code goes here.
-     * note: you should mark the corresponding bit in block bitmap when alloc.
-     * you need to think about which block you can start to be allocated.
-     */
-
-
 
     // According to the layout of block area: |<-sb->|<-free block bitmap->|<-inode table->|<-data->|
     // The start block taken into account should be next to the inode table
-    blockid_t start = IBLOCK(INODE_NUM, sb.nblocks) + 1;
-#ifdef _DEBUG_PART2_E
-    debug_log("alloca_block, using block:[");
-    for (; start < BLOCK_NUM; start++) {
 
-        int is_used = using_blocks[start];
-        if (is_used == 1) {
-            printf("%d,", start);
+    blockid_t hover = next_block;
+    blockid_t start = IBLOCK(INODE_NUM, sb.nblocks) + 1;
+    for (; hover < BLOCK_NUM; hover++) {
+        int is_used = using_blocks[hover];
+        if (is_used == 0) {
+            using_blocks[hover] = 1;
+            next_block = (hover + 1) == BLOCK_NUM ? start : hover + 1;
+            return hover;
         }
     }
-    printf("],");
-#endif
-    start = IBLOCK(INODE_NUM, sb.nblocks) + 1;
-    for (; start < BLOCK_NUM; start++) {
 
-        int is_used = using_blocks[start];
+    for (hover = start; hover < next_block; hover++) {
+        int is_used = using_blocks[hover];
         if (is_used == 0) {
-            using_blocks[start] = 1;
-#ifdef _DEBUG_PART2_E
-            printf("{%d}\n", start);
-#endif
-            return start;
+            using_blocks[hover] = 1;
+            return hover;
         }
     }
 
     // Control flow could't reach here except that blocks are run out of.
     debug_log("block_manager::alloc_block error: Blocks are run out of.\n");
     exit(0);
-
-    return 0;
 }
 
 void
@@ -140,6 +126,7 @@ block_manager::block_manager() {
     d = new disk();
 
     // format the disk
+    next_block = IBLOCK(INODE_NUM, sb.nblocks) + 1;
     sb.size = BLOCK_SIZE * BLOCK_NUM;
     sb.nblocks = BLOCK_NUM;
     sb.ninodes = INODE_NUM;
@@ -170,8 +157,7 @@ inode_manager::inode_manager() {
     next_inum = 2;
 }
 
-/* Create a new file.
- * Return its inum. */
+
 uint32_t
 inode_manager::alloc_inode(uint32_t type) {
     bool found = false;
@@ -198,7 +184,8 @@ inode_manager::alloc_inode(uint32_t type) {
         debug_log("im::alloc_inode ERROR: cannot allocate inode, will exit\n");
         exit(0);
     }
-    next_inum = hover + 1;
+    
+    next_inum = (hover + 1) > INODE_NUM ? 2 : (hover + 1);
     ino->type = (short) type;
     ino->size = 0;
     ino->atime = (unsigned) std::time(0);
@@ -211,21 +198,17 @@ inode_manager::alloc_inode(uint32_t type) {
 
 void
 inode_manager::free_inode(uint32_t inum) {
-    /*
-     * your code goes here.
-     * note: you need to check if the inode is already a freed one;
-     * if not, clear it, and remember to write back to disk.
-     */
+
     struct inode *ino = get_inode(inum);
     if (!ino) {
         debug_log("im::free_inode ERROR: inode returned by get_inode() is NULL, will exit\n");
         exit(0);
     }
 
-    //The inode is already a freed on
+    //The inode is already a freed one
     if (ino->type == 0) {
         debug_log("im::free_inode WARNING: the inode is already a freed one\n");
-        return;
+        exit(0);
     }
 
     ino->type = 0;
@@ -247,11 +230,6 @@ inode_manager::get_inode(uint32_t inum) {
     }
     bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
     ino_disk = (struct inode *) buf + inum % IPB;
-
-//    if (ino_disk->type == 0) {
-//        debug_log("im::get_inode WARNING: inode %u not exist\n", inum);
-//        return NULL;
-//    }
 
 
     ino = (struct inode *) malloc(sizeof(struct inode));

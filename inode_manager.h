@@ -4,6 +4,7 @@
 #define inode_h
 
 #include <stdint.h>
+#include <map>
 #include "extent_protocol.h" // TODO: delete it
 
 #define DISK_SIZE  1024*1024*16
@@ -36,7 +37,10 @@ typedef struct superblock {
 
 class block_manager {
 private:
+    uint32_t next;
+
     disk *d;
+
     std::map<uint32_t, int> using_blocks;
 public:
     block_manager();
@@ -84,6 +88,8 @@ typedef struct inode {
 
 class inode_manager {
 private:
+    uint32_t next_inum;
+
     block_manager *bm;
 
     struct inode *get_inode(uint32_t inum);

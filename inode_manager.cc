@@ -160,45 +160,53 @@ block_manager::write_block(uint32_t id, const char *buf) {
 
 inode_manager::inode_manager() {
     bm = new block_manager();
-    uint32_t root_dir = alloc_inode(extent_protocol::T_DIR);
-    if (root_dir != 1) {
-        printf("\tim: error! alloc first inode %d, should be 1\n", root_dir);
-        exit(0);
-    }
+    struct inode root;
+    root.type = extent_protocol::T_DIR;
+    root.size = 0;
+    root.atime = (unsigned) std::time(0);
+    root.mtime = (unsigned) std::time(0);
+    root.ctime = (unsigned) std::time(0);
+    put_inode(1, &root);
+    next_inum = 2;
 }
 
 /* Create a new file.
  * Return its inum. */
 uint32_t
 inode_manager::alloc_inode(uint32_t type) {
-    /*
-     * your code goes here.
-     * note: the normal inode block should begin from the 2nd inode block.
-     * the 1st is used for root_dir, see inode_manager::inode_manager().
-     */
-
-    //store the block fetched from the disk
-    char buf[BLOCK_SIZE];
-
-    //bypass the first root inode
-    for (uint32_t inum = 1; inum <= INODE_NUM; inum++) {
-        bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
-        struct inode *ino = (struct inode *) buf + inum % IPB; //fetch the ino
+    bool found = false;
+    struct inode *ino = NULL;
+    uint32_t hover = next_inum;
+    for (; hover <= INODE_NUM; hover++) {
+        ino = get_inode(hover);
         if (ino->type == 0) {
-            ino->type = (short) type;
-            ino->size = 0;            //the new allocated inode's size is 0
-            ino->atime = (unsigned) std::time(0);
-            ino->mtime = (unsigned) std::time(0);
-            ino->ctime = (unsigned) std::time(0);
-
-            put_inode(inum, ino);
-            return inum;
+            found = true;
+            break;
+        } else free(ino);
+    }
+    if (!found) {
+        hover = 2;
+        for (; hover < next_inum; hover++) {
+            ino = get_inode(hover);
+            if (ino->type == 0) {
+                found = true;
+                break;
+            } else free(ino);
         }
     }
-
-    debug_log("im::alloc_inode ERROR: cannot allocate inode, will exit\n");
-    exit(0);
-    return 1;
+    if (!found) {
+        debug_log("im::alloc_inode ERROR: cannot allocate inode, will exit\n");
+        exit(0);
+    }
+    next_inum = hover + 1;
+    ino->type = (short) type;
+    ino->size = 0;
+    ino->atime = (unsigned) std::time(0);
+    ino->mtime = (unsigned) std::time(0);
+    ino->ctime = (unsigned) std::time(0);
+    put_inode(hover, ino);
+    free(ino);
+    return hover;
 }
 
 void
@@ -233,23 +241,18 @@ struct inode *
 inode_manager::get_inode(uint32_t inum) {
     struct inode *ino, *ino_disk;
     char buf[BLOCK_SIZE];
-
-
-    // inum out of range
-    if (inum < 0 || inum >= INODE_NUM) {
+    if (inum <= 0 || inum > INODE_NUM) {
         debug_log("im::get_inode ERROR: inum %u out of range\n", inum);
         exit(0);
-        return NULL;
     }
-
     bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
-    // printf("%s:%d\n", __FILE__, __LINE__);
-
     ino_disk = (struct inode *) buf + inum % IPB;
-    if (ino_disk->type == 0) {
-        debug_log("im::get_inode WARNING: inode %u not exist\n", inum);
-        return NULL;
-    }
+
+//    if (ino_disk->type == 0) {
+//        debug_log("im::get_inode WARNING: inode %u not exist\n", inum);
+//        return NULL;
+//    }
+
 
     ino = (struct inode *) malloc(sizeof(struct inode));
     *ino = *ino_disk;

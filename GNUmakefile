@@ -1,4 +1,4 @@
-LAB=2
+LAB=3
 SOL=0
 RPC=./rpc
 LAB1GE=$(shell expr $(LAB) \>\= 1)
@@ -44,6 +44,7 @@ CXX = g++
 lab:  lab$(LAB)
 lab1: lab1_tester yfs_client 
 lab2: lock_server lock_tester lock_demo yfs_client extent_server test-lab2-part1-g test-lab2-part2-a test-lab2-part2-b
+lab3: yfs_client extent_server lock_server lock_tester test-lab-3-a    test-lab-3-b
 lab5: yfs_client extent_server lock_server lock_tester test-lab2-part2-b\
 	 test-lab2-part2-c
 lab6: yfs_client extent_server lock_server test-lab2-part2-b test-lab2-part2-c
@@ -67,7 +68,7 @@ lock_demo=lock_demo.cc lock_client.cc
 lock_demo : $(patsubst %.cc,%.o,$(lock_demo)) rpc/$(RPCLIB)
 
 lock_tester=lock_tester.cc lock_client.cc
-ifeq ($(LAB5GE),1)
+ifeq ($(LAB3GE),1)
   lock_tester += lock_client_cache.cc
 endif
 ifeq ($(LAB7GE),1)
@@ -76,7 +77,7 @@ endif
 lock_tester : $(patsubst %.cc,%.o,$(lock_tester)) rpc/$(RPCLIB)
 
 lock_server=lock_server.cc lock_smain.cc
-ifeq ($(LAB5GE),1)
+ifeq ($(LAB3GE),1)
   lock_server+=lock_server_cache.cc handle.cc
 endif
 ifeq ($(LAB6GE),1)
@@ -97,7 +98,7 @@ endif
 ifeq ($(LAB7GE),1)
   yfs_client += rsm_client.cc lock_client_cache_rsm.cc
 endif
-ifeq ($(LAB5GE),1)
+ifeq ($(LAB3GE),1)
   yfs_client += lock_client_cache.cc
 endif
 yfs_client : $(patsubst %.cc,%.o,$(yfs_client)) rpc/$(RPCLIB)
@@ -126,7 +127,7 @@ fuse.o: fuse.cc
 -include *.d
 -include rpc/*.d
 
-clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab2-part1-a test-lab2-part1-b test-lab2-part1-c test-lab2-part1-g test-lab2-part2-a test-lab2-part2-b rsm_tester lab1_tester demo_client demo_server
+clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab2-part1-a test-lab2-part1-b test-lab2-part1-c test-lab2-part1-g test-lab2-part2-a test-lab2-part2-b test-lab-3-a test-lab-3-b rsm_tester lab1_tester demo_client demo_server
 .PHONY: clean handin
 clean: 
 	rm $(clean_files) -rf 
@@ -136,7 +137,7 @@ handin_file=lab$(LAB).tgz
 labdir=$(shell basename $(PWD))
 handin: 
 	@bash -c "cd ../; tar -X <(tr ' ' '\n' < <(echo '$(handin_ignore)')) -czvf $(handin_file) $(labdir); mv $(handin_file) $(labdir); cd $(labdir)"
-	@echo Please modify lab2.tgz to lab2_[your student id].tgz and upload it to ftp://SJTU.Ticholas.Huang:public@public.sjtu.edu.cn/upload/lab2
+	@echo Please modify lab3.tgz to lab3_[your student id].tgz and upload it to ftp://SJTU.Ticholas.Huang:public@public.sjtu.edu.cn/upload/lab3
 	@echo Thanks!
 
 rpcdemo: demo_server demo_client

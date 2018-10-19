@@ -1,6 +1,10 @@
 *.o
 *.d
 lab1_tester
-*.log
-foo.txt.yfs*
+yfs_client1.log
+yfs_client2.log
+lock_server.log
+extent_server.log
+foo.txt.yfs1
+foo.txt.yfs2
 tmprand

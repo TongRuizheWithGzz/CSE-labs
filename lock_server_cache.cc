@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 #include "lang/verify.h"
 #include "handle.h"
 #include "tprintf.h"
@@ -39,8 +40,18 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
                 lockEntry->retryingClient.clear();
                 lockEntry->state = LOCKED;
                 lockEntry->holdingClient = id;
-                __unlock(&lockManagerLock);
-                return lock_protocol::OK;
+
+
+                tprintf("Server[client:%d, state:RETRYING, action:Grant\n", __getPort(id));
+                if (lockEntry->waitingClients.size() > 0) {
+                    lockEntry->state = REVOKING;
+                    __unlock(&lockManagerLock);
+                    handle(id).safebind()->call(rlock_protocol::revoke, lid, r);
+                    return lock_protocol::OK;
+                } else {
+                    __unlock(&lockManagerLock);
+                    return lock_protocol::OK;
+                }
             }
             // Or else, this must be a new client. Add him to the waitingSets.
         case REVOKING:
@@ -106,7 +117,6 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
     // What can happen here?
     // 1.   Other clients send acquire() RPC.
     //      Simply add them to the waiting set.
-
     handle(nextWaitingClient).safebind()->call(rlock_protocol::retry, lid, r);
     return ret;
 
@@ -135,6 +145,18 @@ void lock_server_cache::__lock(pthread_mutex_t *lock) {
 void lock_server_cache::__unlock(pthread_mutex_t *lock) {
     assert(pthread_mutex_unlock(lock) == 0);
 
+}
+
+int lock_server_cache::__getPort(std::string id) {
+    std::istringstream client(id);
+    int r;
+    char separater;
+    for (int i = 0; i < 4; i++) {
+        client >> r;
+        client >> separater;
+    }
+    client >> r;
+    return r;
 }
 
 

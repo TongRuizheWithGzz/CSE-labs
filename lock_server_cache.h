@@ -41,6 +41,7 @@ private:
 
     void __unlock(pthread_mutex_t *lock);
 
+    int __getPort(std::string id);
 
 public:
 

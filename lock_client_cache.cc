@@ -6,8 +6,10 @@
 #include <sstream>
 #include <iostream>
 #include <stdio.h>
+#include <sys/time.h>
 #include "tprintf.h"
 
+#define __DEBUG
 
 int lock_client_cache::last_port = 0;
 
@@ -35,21 +37,21 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid) {
 
     int ret = lock_protocol::OK, r;
     __lock(&lockManagerLock);
-
     if (lockManager.find(lid) == lockManager.end()) {
         LockEntry *newLockEntry = __initLockEntry();
         lockManager[lid] = newLockEntry;
     }
 
     LockEntry *lockEntry = lockManager[lid];
-    ClientState state = lockEntry->clientState;
+
+#ifdef __DEBUG
+    std::string ms;
+#endif
 
     while (true) {
-        switch (state) {
+        switch (lockEntry->clientState) {
             case NONE:
                 lockEntry->clientState = ACQUIRING;
-
-
                 __unlock(&lockManagerLock);
                 ret = cl->call(lock_protocol::acquire, lid, id, r);
                 // What can happen here?
@@ -64,24 +66,38 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid) {
 
                 assert(ret == lock_protocol::OK || ret == lock_protocol::RETRY);
                 if (ret == lock_protocol::OK) {
-                    Message m = lockEntry->message;
-                    assert(m == REVOKE_RECEIVED || m == EMPTY);
-
                     // It doesn't matter whether a revoke RPC arrives at the client
                     // before acquire RPC returns OK. If revoker RPC arrives first,
                     // the thread will notice the fact in release() call.
                     // So, grant the lock!!
                     lockEntry->clientState = LOCKED;
+
+                    Message m = lockEntry->message;
+                    assert(m == REVOKE_RECEIVED || m == EMPTY);
+
+
+                    m == REVOKE_RECEIVED ? ms = "REVOKE_RECEIVED" : ms = "EMPTY";
+                    tprintf("ACQUIRE:Client[%d],state[NONE]~~~~reponse[OK],RACING message:%s,ACTION: return\n",
+                            rlock_port, ms.c_str());
+
+
                     __unlock(&lockManagerLock);
                     return ret;
 
                 } else if (ret == lock_protocol::RETRY) {
                     Message m = lockEntry->message;
                     assert(m == RETRY_RECEIVED || m == EMPTY);
-                    if (m == EMPTY) // NO retry RPC arrives before acquire RPC
-                        __wait(&lockEntry->shouldAcquireAgain, &lockManagerLock);
 
-                    else m = EMPTY;
+                    m == RETRY_RECEIVED ? ms = "RETRY_RECEIVED" : ms = "EMPTY";
+                    if (m == EMPTY) { // NO retry RPC arrives before acquire RPC
+                        tprintf("ACQUIRE:Client[%d] state[NONE]~~~~reponse[RETRY] RACING message:%s,ACTION: SLEEP\n",
+                                rlock_port, ms.c_str());
+                        __wait(&lockEntry->shouldAcquireAgain, &lockManagerLock);
+                    } else {
+                        tprintf("ACQUIRE:Client[%d] state[NONE]~~~~reponse[RETRY] RACING message:%s,ACTION: reloop\n",
+                                rlock_port, ms.c_str());
+                        lockEntry->message = EMPTY;
+                    }
                     // retry RPC arrives at the client before
                     // the corresponding acquire returns the RETRY failure code.
                     // Mark that we have notice the message(m = EMPTY),
@@ -98,6 +114,7 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid) {
                 // Another thread is returning the lock to the server.
                 // Try to be waken in release() call.
             case RELEASING:
+
                 __wait(&lockEntry->shouldAcquireAgain, &lockManagerLock);
                 break;
 
@@ -110,17 +127,32 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid) {
                     assert(ret == lock_protocol::OK || ret == lock_protocol::RETRY);
                     if (ret == lock_protocol::OK) {
                         lockEntry->clientState = LOCKED;
+                        Message m = lockEntry->message;
+                        assert(m == REVOKE_RECEIVED || m == EMPTY);
+                        m == REVOKE_RECEIVED ? ms = "REVOKE_RECEIVED" : ms = "EMPTY";
+                        tprintf("ACQUIRE:Client[%d],state[ACQUIRING]~~~~reponse[OK],RACING message:%s,ACTION: return\n",
+                                rlock_port, ms.c_str());
+
                         __unlock(&lockManagerLock);
                         return ret;
                     } else if (ret == lock_protocol::RETRY) {
                         Message m = lockEntry->message;
                         assert(m == RETRY_RECEIVED || m == EMPTY);
-                        if (m == EMPTY) // NO retry RPC arrives before acquire RPC
+                        if (m == EMPTY) { // NO retry RPC arrives before acquire RPC
+                            tprintf("ACQUIRE:Client[%d] state[ACQUIRING]~~~~reponse[RETRY] RACING message:%s,ACTION: SLEEP\n",
+                                    rlock_port, ms.c_str());
                             __wait(&lockEntry->shouldAcquireAgain, &lockManagerLock);
-
-                        else m = EMPTY;    // Break to loop again!
+                        } else {
+                            tprintf("ACQUIRE:Client[%d] state[ACQUIRING]~~~~reponse[RETRY] RACING message:%s,ACTION: reloop\n",
+                                    rlock_port, ms.c_str());
+                            lockEntry->message = EMPTY;
+                        }
                     }
-                } else __wait(&lockEntry->shouldAcquireAgain, &lockManagerLock);
+                } else {
+                    tprintf("ACQUIRE:Client[%d] state[ACQUIRING]~~~~No RETRYING message, others acquiring?ACTION: sleep\n",
+                            rlock_port);
+                    __wait(&lockEntry->shouldAcquireAgain, &lockManagerLock);
+                }
                 break;
 
                 // The lock is available.

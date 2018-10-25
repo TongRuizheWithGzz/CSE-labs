@@ -9,3 +9,9 @@ foo.txt.yfs1
 foo.txt.yfs2
 tmprand
 .vscode/
+extent_server
+lock_server
+lock_tester
+test-lab-3-a
+test-lab-3-b
+yfs_client

@@ -184,7 +184,7 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
         // Otherwise,  a thread may hold the lock meaning the state is LOCKED,
         // or, and the tricky case, the state is ACQUIRING. That is, the acquire RPC call
         // from the client to server hasn't bee validated be the client.
-    else lockEntry->message = REVOKE_RECEIVED;
+    else lockEntry->putMessage(REVOKE_RECEIVED);
     __unlock(&lockManagerLock);
     return ret;
 }
@@ -196,7 +196,7 @@ lock_client_cache::retry_handler(lock_protocol::lockid_t lid,
     __lock(&lockManagerLock);
     LockEntry *lockEntry = __checkLockEntry(lid);
     assert(lockEntry->clientState == ACQUIRING);
-    lockEntry->message = RETRY_RECEIVED;
+    lockEntry->putMessage(RETRY_RECEIVED);
     pthread_cond_signal(&lockEntry->shouldAcquireAgain);
     __unlock(&lockManagerLock);
     return ret;
@@ -239,16 +239,8 @@ void lock_client_cache::__signal(pthread_cond_t *cv) {
 }
 
 
+void lock_client_cache::LockEntry::putMessage(lock_client_cache::Message m) {
+    assert(this->message == EMPTY);
+    this->message = m;
 
-
-
-
-
-
-
-
-
-
-
-
-
+}

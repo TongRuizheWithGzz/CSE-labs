@@ -29,35 +29,55 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
 
     LockEntry *lockEntry = lockManager[lid];
     State state = lockEntry->state;
-    handle h(id);
     std::string owner;
     switch (state) {
         case RETRYING:
-            assert(!lockEntry->waitingClients.count(id));
+            // The client we would like to grant the lock is sending a retry RPC.
+            // We should grant the lock to him
+            if (lockEntry->retryingClient == id) {
+                assert(!lockEntry->waitingClients.count(id));
+                lockEntry->retryingClient.clear();
+                lockEntry->state = LOCKED;
+                lockEntry->holdingClient = id;
+                __unlock(&lockManagerLock);
+                return lock_protocol::OK;
+            }
+            // Or else, this must be a new client. Add him to the waitingSets.
         case REVOKING:
-            //I have noticed your RPC call, please waiting patiently.
+            //I have noticed your RPC call, please wait patiently.
+            assert(!lockEntry->waitingClients.count(id));
             lockEntry->waitingClients.insert(id);
             __unlock(&lockManagerLock);
             return lock_protocol::RETRY;
         case LOCKED:
+            // Because we use cache locks, the client held the lock should never
+            // ask the lock again!!
+            assert(!lockEntry->waitingClients.count(id));
             lockEntry->waitingClients.insert(id);
-            owner = lockEntry->holderID;
+            owner = lockEntry->holdingClient;
+            assert(owner.length() != 0);
             lockEntry->state = REVOKING;
             __unlock(&lockManagerLock);
+
             // What can happen here?
             // 1.   Other clients send acquire() RPC.
             //      Simply add them to the waiting set.
-            h.safebind()->call(rlock_protocol::revoke, lid, r);
+            handle(owner).safebind()->call(rlock_protocol::revoke, lid, r);
             // What can happen here?
             // 1.   When call() returns, since the lock is not being held,
             //      So the release RPC may have been called by the client.
             //      But it doesn't matter, because release() RPC will send retry RPC to client.
             return lock_protocol::RETRY;
         case NONE:
-            lockEntry->holderID = id;
+            // New lock entry.
+            assert(lockEntry->waitingClients.size() == 0);
+            assert(lockEntry->holdingClient.length() == 0);
+            lockEntry->holdingClient = id;
             lockEntry->state = LOCKED;
             __unlock(&lockManagerLock);
             return lock_protocol::OK;
+        default:
+            assert(0);
 
     }
     return ret;
@@ -72,21 +92,22 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
     LockEntry *lockEntry = lockManager[lid];
     assert(lockEntry);
 
-    // Unless other threads asking for the lock, no thread needs call release().
+    // Unless other client asking for the lock, no client needs call release().
     // Therefore, the waitingClients.size() > 0 here.
     assert(lockEntry->state == REVOKING);
     assert(lockEntry->waitingClients.size() != 0);
-    assert(lockEntry->holderID == id);
+    assert(lockEntry->holdingClient == id);
 
     std::string nextWaitingClient = *(lockEntry->waitingClients.begin());
+    lockEntry->waitingClients.erase(lockEntry->waitingClients.begin());
+    lockEntry->retryingClient = nextWaitingClient;
     lockEntry->state = RETRYING;
-    handle h(nextWaitingClient);
     __unlock(&lockManagerLock);
     // What can happen here?
     // 1.   Other clients send acquire() RPC.
     //      Simply add them to the waiting set.
 
-    h.safebind()->call(rlock_protocol::retry, lid, r);
+    handle(nextWaitingClient).safebind()->call(rlock_protocol::retry, lid, r);
     return ret;
 
 }

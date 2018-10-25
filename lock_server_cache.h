@@ -25,7 +25,8 @@ private:
 
     struct LockEntry {
         State state;
-        std::string holderID;
+        std::string holdingClient;
+        std::string retryingClient;
         std::set<std::string> waitingClients;
 
     };
@@ -42,10 +43,6 @@ private:
 
 
 public:
-    
-
-
-    
 
 
     lock_server_cache();

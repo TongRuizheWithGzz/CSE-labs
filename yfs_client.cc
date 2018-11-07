@@ -25,7 +25,7 @@
 
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst) {
     ec = new extent_client(extent_dst);
-    lc = new lock_client(lock_dst);
+    lc = new lock_client_cache(lock_dst);
 
     //TODO: acquire(1)& release(1) seems unneccesary
     lc->acquire(1);

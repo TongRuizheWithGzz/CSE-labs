@@ -1,9 +1,8 @@
-// the caching lock server implementation
-
 #include "lock_server_cache.h"
 #include <sstream>
 #include <stdio.h>
 #include <unistd.h>
+#include <set>
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include "lang/verify.h"
@@ -12,112 +11,172 @@
 
 
 lock_server_cache::lock_server_cache() {
-    nacquire = 0;
-    pthread_mutex_init(&lockManagerLock, NULL);
-
+    VERIFY(pthread_mutex_init(&lockManagerLock, NULL) == 0);
+    shift = 12;
 }
 
 
-int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
+int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string m,
                                int &) {
     int r;
-    lock_protocol::status ret = lock_protocol::OK;
-    __lock(&lockManagerLock);
-    if (lockManager.find(lid) == lockManager.end()) {
-        LockEntry *newLockEntry = __initLockEntry();
-        lockManager[lid] = newLockEntry;
+    std::map<lock_protocol::lockid_t, LockEntry *>::iterator iter;
+    RPCRecord::iterator iter2;
+    pthread_mutex_lock(&lockManagerLock);
+    std::string clientID = getClientID(m);
+    int nOfComingRPC = getRPCCount(m);
+
+
+    iter = lockManager.find(lid);
+    if (iter == lockManager.end()) {
+        lockManager[lid] = new LockEntry;
+        lockManager[lid]->state = NONE;
+        assert(lockManager[lid]->owner.empty());
+        assert(lockManager[lid]->retryingClient.empty());
+        assert(lockManager[lid]->waitingClients.empty());
     }
 
     LockEntry *lockEntry = lockManager[lid];
-    State state = lockEntry->state;
-    std::string owner;
-    switch (state) {
+    iter2 = lockEntry->receivedRpcRecord.find(clientID);
+
+    if (iter2 == lockEntry->receivedRpcRecord.end()) {
+        lockEntry->receivedRpcRecord[clientID] = std::vector<lock_protocol::xxstatus>();
+    }
+
+
+    if ((unsigned) nOfComingRPC > lockEntry->receivedRpcRecord[clientID].size()) {
+        assert(lockEntry->receivedRpcRecord[clientID].size() == (unsigned) (nOfComingRPC - 1));
+    } else {
+        pthread_mutex_unlock(&lockManagerLock);
+        return lockEntry->receivedRpcRecord[clientID][nOfComingRPC - 1];
+    }
+
+
+    switch (lockEntry->state) {
+
+        case NONE:
+            assert(lockEntry->owner.empty());
+            lockEntry->state = LOCKED;
+            lockEntry->owner = clientID;
+            lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::OK);
+
+            pthread_mutex_unlock(&lockManagerLock);
+            return lock_protocol::OK;
+
+        case LOCKED:
+            assert(!lockEntry->waitingClients.count(clientID));
+            assert(!lockEntry->owner.empty());
+            assert(lockEntry->owner != clientID);
+
+            lockEntry->waitingClients.insert(clientID);
+            lockEntry->state = REVOKING;
+            lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::RETRY);
+
+
+            lid = lid << shift;
+            lockEntry->sendedRPCCount[lockEntry->owner]++;
+            lid = lid | lockEntry->sendedRPCCount[lockEntry->owner];
+            pthread_mutex_unlock(&lockManagerLock);
+            handle(lockEntry->owner).safebind()->call(rlock_protocol::revoke, lid, r);
+
+            return lock_protocol::RETRY;
+
+        case REVOKING:
+
+            assert(!lockEntry->waitingClients.count(clientID));
+            lockEntry->waitingClients.insert(clientID);
+            lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::RETRY);
+            pthread_mutex_unlock(&lockManagerLock);
+
+            return lock_protocol::RETRY;
+
+
         case RETRYING:
-            // The client we would like to grant the lock is sending a retry RPC.
-            // We should grant the lock to him
-            if (lockEntry->retryingClient == id) {
-                assert(!lockEntry->waitingClients.count(id));
+            if (clientID == lockEntry->retryingClient) {
+                assert(!lockEntry->waitingClients.count(clientID));
                 lockEntry->retryingClient.clear();
                 lockEntry->state = LOCKED;
-                lockEntry->holdingClient = id;
+                lockEntry->owner = clientID;
 
-
-                tprintf("Server[client:%d, state:RETRYING, action:Grant\n", __getPort(id));
                 if (lockEntry->waitingClients.size() > 0) {
                     lockEntry->state = REVOKING;
-                    __unlock(&lockManagerLock);
-                    handle(id).safebind()->call(rlock_protocol::revoke, lid, r);
+                    lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::OK);
+
+
+                    lid = lid << shift;
+                    lockEntry->sendedRPCCount[clientID]++;
+                    lid = lid | lockEntry->sendedRPCCount[clientID];
+
+                    tprintf("Server[%d]<==acquire==>RETRYING client come, give him and revoke, nOfRPC[%d]\n",
+                            __getPort(clientID), lockEntry->sendedRPCCount[clientID]);
+
+
+                    pthread_mutex_unlock(&lockManagerLock);
+                    handle(clientID).safebind()->call(rlock_protocol::revoke, lid, r);
                     return lock_protocol::OK;
+
                 } else {
-                    __unlock(&lockManagerLock);
+                    lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::OK);
+                    pthread_mutex_unlock(&lockManagerLock);
                     return lock_protocol::OK;
                 }
-            }
-            // Or else, this must be a new client. Add him to the waitingSets.
-        case REVOKING:
-            //I have noticed your RPC call, please wait patiently.
-            assert(!lockEntry->waitingClients.count(id));
-            lockEntry->waitingClients.insert(id);
-            __unlock(&lockManagerLock);
-            return lock_protocol::RETRY;
-        case LOCKED:
-            // Because we use cache locks, the client held the lock should never
-            // ask the lock again!!
-            assert(!lockEntry->waitingClients.count(id));
-            lockEntry->waitingClients.insert(id);
-            owner = lockEntry->holdingClient;
-            assert(owner.length() != 0);
-            lockEntry->state = REVOKING;
-            __unlock(&lockManagerLock);
 
-            // What can happen here?
-            // 1.   Other clients send acquire() RPC.
-            //      Simply add them to the waiting set.
-            handle(owner).safebind()->call(rlock_protocol::revoke, lid, r);
-            // What can happen here?
-            // 1.   When call() returns, since the lock is not being held,
-            //      So the release RPC may have been called by the client.
-            //      But it doesn't matter, because release() RPC will send retry RPC to client.
-            return lock_protocol::RETRY;
-        case NONE:
-            // New lock entry.
-            assert(lockEntry->waitingClients.size() == 0);
-            assert(lockEntry->holdingClient.length() == 0);
-            lockEntry->holdingClient = id;
-            lockEntry->state = LOCKED;
-            __unlock(&lockManagerLock);
-            return lock_protocol::OK;
+
+            } else {
+                assert(!lockEntry->waitingClients.count(clientID));
+                lockEntry->waitingClients.insert(clientID);
+                lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::RETRY);
+
+                pthread_mutex_unlock(&lockManagerLock);
+                return lock_protocol::RETRY;
+            }
         default:
             assert(0);
-
     }
-    return ret;
+
+
 }
 
 int
-lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
+lock_server_cache::release(lock_protocol::lockid_t lid, std::string m,
                            int &r) {
-
     lock_protocol::status ret = lock_protocol::OK;
-    __lock(&lockManagerLock);
+    pthread_mutex_lock(&lockManagerLock);
     LockEntry *lockEntry = lockManager[lid];
     assert(lockEntry);
+    std::string clientID = getClientID(m);
+    int nOfComingRPC = getRPCCount(m);
 
-    // Unless other client asking for the lock, no client needs call release().
-    // Therefore, the waitingClients.size() > 0 here.
+    if ((unsigned) nOfComingRPC > lockEntry->receivedRpcRecord[clientID].size())
+        assert(lockEntry->receivedRpcRecord[clientID].size() == (unsigned) (nOfComingRPC - 1));
+    else {
+        pthread_mutex_unlock(&lockManagerLock);
+        return lockEntry->receivedRpcRecord[clientID][nOfComingRPC - 1];
+    }
+
+
     assert(lockEntry->state == REVOKING);
-    assert(lockEntry->waitingClients.size() != 0);
-    assert(lockEntry->holdingClient == id);
+    assert(lockEntry->waitingClients.size() >= 0);
+    assert(lockEntry->owner == clientID);
 
     std::string nextWaitingClient = *(lockEntry->waitingClients.begin());
     lockEntry->waitingClients.erase(lockEntry->waitingClients.begin());
     lockEntry->retryingClient = nextWaitingClient;
+    lockEntry->owner.clear();
     lockEntry->state = RETRYING;
-    __unlock(&lockManagerLock);
-    // What can happen here?
-    // 1.   Other clients send acquire() RPC.
-    //      Simply add them to the waiting set.
+    lockEntry->receivedRpcRecord[clientID].push_back(lock_protocol::OK);
+
+    lid = lid << shift;
+    lockEntry->sendedRPCCount[nextWaitingClient]++;
+    lid = lid | lockEntry->sendedRPCCount[nextWaitingClient];
+
+    tprintf("Server[%d]<==release==> toRetry[%d], nOfRPC[%d]\n", __getPort(clientID), __getPort(nextWaitingClient),
+            lockEntry->sendedRPCCount[nextWaitingClient]);
+
+    pthread_mutex_unlock(&lockManagerLock);
+
+
     handle(nextWaitingClient).safebind()->call(rlock_protocol::retry, lid, r);
+
     return ret;
 
 }
@@ -127,24 +186,6 @@ lock_server_cache::stat(lock_protocol::lockid_t lid, int &r) {
     tprintf("stat request\n");
     r = nacquire;
     return lock_protocol::OK;
-}
-
-lock_server_cache::LockEntry *
-lock_server_cache::__initLockEntry() {
-    LockEntry *lockEntry = new LockEntry;
-    lockEntry->state = NONE;
-    return lockEntry;
-}
-
-
-void lock_server_cache::__lock(pthread_mutex_t *lock) {
-    assert(pthread_mutex_lock(lock) == 0);
-
-}
-
-void lock_server_cache::__unlock(pthread_mutex_t *lock) {
-    assert(pthread_mutex_unlock(lock) == 0);
-
 }
 
 int lock_server_cache::__getPort(std::string id) {
@@ -159,9 +200,66 @@ int lock_server_cache::__getPort(std::string id) {
     return r;
 }
 
+std::string lock_server_cache::__dumpClients(LockEntry &le) {
+
+    std::string result;
+    std::ostringstream message;
+    std::string tmp;
 
 
+    std::ostringstream port;
+    if (le.owner != "") {
+        port << __getPort(le.owner);
+        tmp = port.str();
+        port.clear();
+    } else tmp = "NoOwner";
+    message << "Owner[" << tmp << "], ";
+
+    switch (le.state) {
+        case LOCKED:
+            tmp = "LOCKED";
+            break;
+        case REVOKING:
+            tmp = "LOCKED_AND_WAIT";
+            break;
+        case NONE:
+            tmp = "FREE";
+            break;
+        case RETRYING:
+            tmp = "RETRYING";
+            break;
+    }
+    message << "lockState[" << tmp << "], waitSet:[";
+    std::set<std::string>::iterator iter = le.waitingClients.begin();
+    while (iter != le.waitingClients.end()) {
+        message << __getPort((*iter)) << ",";
+        iter++;
+    }
+
+    message << "]" << "\n";
+
+    return message.str();
+}
+
+std::string lock_server_cache::__randomNumberGenerator() {
+    return std::string();
+}
 
 
+int lock_server_cache::getRPCCount(std::string id) {
+    std::istringstream input(id);
+    int r;
+    char separater;
+    for (int i = 0; i < 5; i++) {
+        input >> r;
+        input >> separater;
+    }
+    input >> r;
+    return r;
+}
 
-
+std::string lock_server_cache::getClientID(std::string id) {
+    std::string delimiter = "-";
+    std::string r = id.substr(0, id.find(delimiter));
+    return r;
+}

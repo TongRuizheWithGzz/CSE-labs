@@ -5,17 +5,17 @@
 #define lock_client_cache_h
 
 #include <string>
-#include <pthread.h>
-#include <map>
 #include "lock_protocol.h"
 #include "rpc.h"
 #include "lock_client.h"
 #include "lang/verify.h"
-
+#include <pthread.h>
+#include <map>
+#include <list>
 
 // Classes that inherit lock_release_user can override dorelease so that
 // that they will be called when lock_client releases a lock.
-// You will not need to do anything with this class until Lab 5.
+// You will not need to do anything with this class until Lab 6.
 class lock_release_user {
 public:
     virtual void dorelease(lock_protocol::lockid_t) = 0;
@@ -25,52 +25,64 @@ public:
 
 class lock_client_cache : public lock_client {
 private:
+    class lock_release_user *lu;
 
-    enum lock_state {
-        NONE, FREE, LOCKED, ACQUIRING, RELEASING
+    int rlock_port;
+    std::string hostname;
+    std::string id;
+
+    enum Message {
+        EMPTY,
+        RETRY,
+        REVOKE
     };
 
-    uint32_t shift;
-    uint32_t mask;
+    enum LockState {
+        NONE,
+        ACQUIRING,
+        FREE,
+        RELEASING,
+        LOCKED,
+    };
 
-    struct lock_entry {
-        bool revoked;
-        bool retry;
-        lock_state state;
-        int RPCCount;
-        std::vector<rlock_protocol::xxstatus> RCPRecord;
-        pthread_cond_t waitqueue;
-        pthread_cond_t releasequeue;
-        pthread_cond_t retryqueue;
 
-        lock_entry() : revoked(false), retry(false), state(NONE) {
-            RPCCount = 0;
+    struct QueuingThread {
 
-            VERIFY(pthread_cond_init(&waitqueue, NULL) == 0);
-            VERIFY(pthread_cond_init(&releasequeue, NULL) == 0);
-            VERIFY(pthread_cond_init(&retryqueue, NULL) == 0);
+        pthread_cond_t cv;
+
+        QueuingThread() {
+            pthread_cond_init(&cv, NULL);
         }
     };
 
 
-    class lock_release_user *lu;
+    struct LockEntry {
+        LockState state;
+        Message message;
+        std::list<QueuingThread *> threads;
 
-    int rlock_port;
+        LockEntry() {
+            state = NONE;
+            message = EMPTY;
+        }
+    };
 
-    std::string id;
-    pthread_mutex_t client_mutex;
-    std::map<lock_protocol::lockid_t, lock_entry> lockmap;
 
-    std::string wrap(lock_protocol::lockid_t lid, std::string s);
+    pthread_mutex_t lockManagerLock;
 
-    std::string __getState(lock_state m);
+    std::map<lock_protocol::lockid_t, LockEntry *> lockManager;
+
+    lock_protocol::status blockUntilGot(LockEntry *,
+                                        lock_protocol::lockid_t,
+                                        QueuingThread *thisThread);
+
 
 public:
     static int last_port;
 
     lock_client_cache(std::string xdst, class lock_release_user *l = 0);
 
-    virtual ~lock_client_cache() {};
+    virtual ~lock_client_cache();
 
     lock_protocol::status acquire(lock_protocol::lockid_t);
 

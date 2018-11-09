@@ -55,6 +55,7 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid) {
         pthread_cond_wait(&thisThread->cv, &lockManagerLock);
         switch (lockEntry->state) {
             case FREE:
+		lockEntry->state = LOCKED;
             case LOCKED:
                 pthread_mutex_unlock(&lockManagerLock);
                 return lock_protocol::OK;

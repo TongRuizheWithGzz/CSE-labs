@@ -6,11 +6,9 @@
 #include <stdint.h>
 #include "extent_protocol.h" // TODO: delete it
 
-#define DISK_SIZE  1024*1024*16
-#define BLOCK_SIZE 512
+#define DISK_SIZE  1024*1024*32
+#define BLOCK_SIZE (1024*16)
 #define BLOCK_NUM  (DISK_SIZE/BLOCK_SIZE)
-
-typedef uint32_t blockid_t;
 
 // disk layer -----------------------------------------
 
@@ -90,6 +88,11 @@ class inode_manager {
   void write_file(uint32_t inum, const char *buf, int size);
   void remove_file(uint32_t inum);
   void getattr(uint32_t inum, extent_protocol::attr &a);
+  void append_block(uint32_t inum, blockid_t &bid);
+  void get_block_ids(uint32_t inum, std::list<blockid_t> &block_ids);
+  void read_block(blockid_t bid, char block[BLOCK_SIZE]);
+  void write_block(blockid_t bid, const char block[BLOCK_SIZE]);
+  void complete(uint32_t inum, uint32_t size);
 };
 
 #endif

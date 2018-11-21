@@ -78,3 +78,47 @@ int extent_server::remove(extent_protocol::extentid_t id, int &)
   return extent_protocol::OK;
 }
 
+int extent_server::append_block(extent_protocol::extentid_t id, blockid_t &bid)
+{
+  id &= 0x7fffffff;
+
+  im->append_block(id, bid);
+
+  return extent_protocol::OK;
+}
+
+int extent_server::get_block_ids(extent_protocol::extentid_t id, std::list<blockid_t> &block_ids)
+{
+  id &= 0x7fffffff;
+
+  im->get_block_ids(id, block_ids);
+
+  return extent_protocol::OK;
+}
+
+int extent_server::read_block(blockid_t id, std::string &buf)
+{
+  char _buf[BLOCK_SIZE];
+
+  im->read_block(id, _buf);
+  buf.assign(_buf, BLOCK_SIZE);
+
+  return extent_protocol::OK;
+}
+
+int extent_server::write_block(blockid_t id, std::string buf, int &)
+{
+  if (buf.size() != BLOCK_SIZE)
+    return extent_protocol::IOERR;
+
+  im->write_block(id, (const char *) buf.data());
+
+  return extent_protocol::OK;
+}
+
+int extent_server::complete(extent_protocol::extentid_t eid, uint32_t size, int &)
+{
+  im->complete(eid, size);
+  return extent_protocol::OK;
+}
+

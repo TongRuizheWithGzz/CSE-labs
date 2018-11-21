@@ -5,6 +5,7 @@
 
 #include <string>
 #include <map>
+#include <list>
 #include "extent_protocol.h"
 #include "inode_manager.h"
 
@@ -27,6 +28,11 @@ class extent_server {
   int get(extent_protocol::extentid_t id, std::string &);
   int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
   int remove(extent_protocol::extentid_t id, int &);
+  int get_block_ids(extent_protocol::extentid_t id, std::list<blockid_t> &);
+  int read_block(blockid_t id, std::string &buf);
+  int write_block(blockid_t id, std::string buf, int &);
+  int append_block(extent_protocol::extentid_t eid, blockid_t &bid);
+  int complete(extent_protocol::extentid_t eid, uint32_t size, int &);
 };
 
 #endif 

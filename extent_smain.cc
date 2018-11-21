@@ -31,6 +31,11 @@ main(int argc, char *argv[])
   server.reg(extent_protocol::put, &ls, &extent_server::put);
   server.reg(extent_protocol::remove, &ls, &extent_server::remove);
   server.reg(extent_protocol::create, &ls, &extent_server::create);
+  server.reg(extent_protocol::get_block_ids, &ls, &extent_server::get_block_ids);
+  server.reg(extent_protocol::read_block, &ls, &extent_server::read_block);
+  server.reg(extent_protocol::write_block, &ls, &extent_server::write_block);
+  server.reg(extent_protocol::append_block, &ls, &extent_server::append_block);
+  server.reg(extent_protocol::complete, &ls, &extent_server::complete);
 
   while(1)
     sleep(1000);

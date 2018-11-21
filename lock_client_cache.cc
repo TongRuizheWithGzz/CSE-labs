@@ -17,9 +17,8 @@ lock_client_cache::lock_client_cache(std::string xdst,
 {
   srand(time(NULL)^last_port);
   rlock_port = ((rand()%32000) | (0x1 << 10));
-  const char *hname;
-  // VERIFY(gethostname(hname, 100) == 0);
-  hname = "127.0.0.1";
+  char hname[100];
+  VERIFY(gethostname(hname, sizeof(hname)) == 0);
   std::ostringstream host;
   host << hname << ":" << rlock_port;
   id = host.str();

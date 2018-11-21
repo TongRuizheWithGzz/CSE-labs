@@ -230,6 +230,28 @@ operator>>(unmarshall &u, std::vector<C> &v)
 	return u;
 }
 
+template <class C> marshall &
+operator<<(marshall &m, std::list<C> v)
+{
+	m << (unsigned int) v.size();
+	for(auto it = v.begin(); it != v.end(); it++)
+		m << *it;
+	return m;
+}
+
+template <class C> unmarshall &
+operator>>(unmarshall &u, std::list<C> &v)
+{
+	unsigned n;
+	u >> n;
+	for(unsigned i = 0; i < n; i++){
+		C z;
+		u >> z;
+		v.push_back(z);
+	}
+	return u;
+}
+
 template <class A, class B> marshall &
 operator<<(marshall &m, const std::map<A,B> &d) {
 	typename std::map<A,B>::const_iterator i;

@@ -8,3 +8,12 @@ extent_server.log
 foo.txt.yfs1
 foo.txt.yfs2
 tmprand
+yfs_client
+extent_server
+datanode
+namenode
+lock_server
+/proto/output/*.o
+/part1_tester
+/app_public_ip
+*.log

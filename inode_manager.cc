@@ -212,3 +212,48 @@ inode_manager::remove_file(uint32_t inum)
   
   return;
 }
+
+void
+inode_manager::append_block(uint32_t inum, blockid_t &bid)
+{
+  /*
+   * your code goes here.
+   */
+
+}
+
+void
+inode_manager::get_block_ids(uint32_t inum, std::list<blockid_t> &block_ids)
+{
+  /*
+   * your code goes here.
+   */
+
+}
+
+void
+inode_manager::read_block(blockid_t id, char buf[BLOCK_SIZE])
+{
+  /*
+   * your code goes here.
+   */
+
+}
+
+void
+inode_manager::write_block(blockid_t id, const char buf[BLOCK_SIZE])
+{
+  /*
+   * your code goes here.
+   */
+
+}
+
+void
+inode_manager::complete(uint32_t inum, uint32_t size)
+{
+  /*
+   * your code goes here.
+   */
+
+}

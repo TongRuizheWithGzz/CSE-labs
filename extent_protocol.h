@@ -5,6 +5,8 @@
 
 #include "rpc.h"
 
+typedef uint32_t blockid_t;
+
 class extent_protocol {
  public:
   typedef int status;
@@ -15,7 +17,12 @@ class extent_protocol {
     get,
     getattr,
     remove,
-    create
+    create,
+    get_block_ids,
+    read_block,
+    write_block,
+    append_block,
+    complete
   };
 
   enum types {

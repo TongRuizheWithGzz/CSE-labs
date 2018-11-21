@@ -1,4 +1,4 @@
-LAB=3
+LAB=4
 SOL=0
 RPC=./rpc
 LAB1GE=$(shell expr $(LAB) \>\= 1)
@@ -8,7 +8,7 @@ LAB4GE=$(shell expr $(LAB) \>\= 4)
 LAB5GE=$(shell expr $(LAB) \>\= 5)
 LAB6GE=$(shell expr $(LAB) \>\= 6)
 LAB7GE=$(shell expr $(LAB) \>\= 7)
-CXXFLAGS =  -g -MMD -Wall -I. -I$(RPC) -DLAB=$(LAB) -DSOL=$(SOL) -D_FILE_OFFSET_BITS=64
+CXXFLAGS =  -g -MMD -Wall -I. -I$(RPC) -Iproto/output -DLAB=$(LAB) -DSOL=$(SOL) -D_FILE_OFFSET_BITS=64 -std=c++11
 FUSEFLAGS= -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=25 -I/usr/local/include/fuse -I/usr/include/fuse
 
 # choose librpc based on architecture
@@ -24,7 +24,7 @@ else
   MACFLAGS=
 endif
 LDFLAGS = -L. -L/usr/local/lib
-LDLIBS = -lpthread 
+LDLIBS = -lpthread -lprotobuf
 ifeq ($(LAB1GE),1)
   ifeq ($(shell uname -s),Darwin)
     ifeq ($(shell sw_vers -productVersion | sed -e "s/.*\(10\.[0-9]\).*/\1/"),10.6)
@@ -45,6 +45,7 @@ lab:  lab$(LAB)
 lab1: lab1_tester yfs_client 
 lab2: lock_server lock_tester lock_demo yfs_client extent_server test-lab2-part1-g test-lab2-part2-a test-lab2-part2-b
 lab3: yfs_client extent_server lock_server lock_tester test-lab-3-a    test-lab-3-b
+lab4: yfs_client namenode datanode lock_server extent_server
 lab5: yfs_client extent_server lock_server lock_tester test-lab2-part2-b\
 	 test-lab2-part2-c
 lab6: yfs_client extent_server lock_server test-lab2-part2-b test-lab2-part2-c
@@ -106,6 +107,24 @@ yfs_client : $(patsubst %.cc,%.o,$(yfs_client)) rpc/$(RPCLIB)
 extent_server=extent_server.cc extent_smain.cc inode_manager.cc
 extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/$(RPCLIB)
 
+proto/output/common.pb.cc proto/output/common.pb.h: proto/common.proto
+	@mkdir -p proto/output
+	protoc --cpp_out=proto/output -Iproto proto/common.proto
+
+namenode=namenode.cc inode_manager.cc proto/output/namenode.pb.cc proto/output/common.pb.cc namenode_base.cc extent_client.cc lock_client.cc yfs_client.cc lock_client_cache.cc
+namenode : $(patsubst %.cc,%.o,$(namenode)) rpc/$(RPCLIB)
+
+proto/output/namenode.pb.cc proto/output/namenode.pb.h:
+	@mkdir -p proto/output
+	protoc --cpp_out=proto/output -Iproto proto/namenode.proto
+
+datanode=datanode_base.cc datanode.cc inode_manager.cc proto/output/datanode.pb.cc proto/output/common.pb.cc extent_client.cc
+datanode : $(patsubst %.cc,%.o,$(datanode)) rpc/$(RPCLIB)
+
+proto/output/datanode.pb.cc proto/output/datanode.pb.h:
+	@mkdir -p proto/output
+	protoc --cpp_out=proto/output -Iproto proto/datanode.proto
+
 test-lab2-part1-b=test-lab2-part1-b.c
 test-lab2-part1-b:  $(patsubst %.c,%.o,$(test-lab2-part1-b)) rpc/$(RPCLIB)
 
@@ -118,6 +137,10 @@ rsm_tester:  $(patsubst %.cc,%.o,$(rsm_tester)) rpc/$(RPCLIB)
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+namenode.o: proto/output/namenode.pb.h
+
+datanode.o: proto/output/datanode.pb.h
+
 fuse.o: fuse.cc
 	$(CXX) -c $(CXXFLAGS) $(FUSEFLAGS) $(MACFLAGS) $<
 
@@ -127,17 +150,17 @@ fuse.o: fuse.cc
 -include *.d
 -include rpc/*.d
 
-clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab2-part1-a test-lab2-part1-b test-lab2-part1-c test-lab2-part1-g test-lab2-part2-a test-lab2-part2-b test-lab-3-a test-lab-3-b rsm_tester lab1_tester demo_client demo_server
+clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab2-part1-a test-lab2-part1-b test-lab2-part1-c test-lab2-part1-g test-lab2-part2-a test-lab2-part2-b test-lab-3-a test-lab-3-b rsm_tester lab1_tester demo_client demo_server proto/output/*.o
 .PHONY: clean handin
 clean: 
 	rm $(clean_files) -rf 
 
-handin_ignore=$(clean_files) core* *log
+handin_ignore=$(clean_files) core* *log .git
 handin_file=lab$(LAB).tgz
 labdir=$(shell basename $(PWD))
 handin: 
 	@bash -c "cd ../; tar -X <(tr ' ' '\n' < <(echo '$(handin_ignore)')) -czvf $(handin_file) $(labdir); mv $(handin_file) $(labdir); cd $(labdir)"
-	@echo Please modify lab3.tgz to lab3_[your student id].tgz and upload it to ftp://SJTU.Ticholas.Huang:public@public.sjtu.edu.cn/upload/lab3
+	@echo Please modify lab4.tgz to lab4_[your student id].tgz and upload it to ftp://SJTU.Ticholas.Huang:public@public.sjtu.edu.cn/upload/lab4
 	@echo Thanks!
 
 rpcdemo: demo_server demo_client

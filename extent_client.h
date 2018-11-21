@@ -21,6 +21,11 @@ class extent_client {
 				                          extent_protocol::attr &a);
   extent_protocol::status put(extent_protocol::extentid_t eid, std::string buf);
   extent_protocol::status remove(extent_protocol::extentid_t eid);
+  extent_protocol::status get_block_ids(extent_protocol::extentid_t eid, std::list<blockid_t> &block_ids);
+  extent_protocol::status read_block(blockid_t bid, std::string &buf);
+  extent_protocol::status write_block(blockid_t bid, const std::string &buf);
+  extent_protocol::status append_block(extent_protocol::extentid_t eid, blockid_t &bid);
+  extent_protocol::status complete(extent_protocol::extentid_t eid, uint32_t size);
 };
 
 #endif 

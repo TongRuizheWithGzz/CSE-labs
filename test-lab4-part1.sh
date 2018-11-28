@@ -163,11 +163,11 @@ import_random() {
 }
 
 if [ -f app_public_ip ]; then
-  scp test-lab4-part1.sh test-lab4-common.sh cse@$(cat app_public_ip): >/dev/null 2>&1
+  safe_run $SCP test-lab4-part1.sh test-lab4-common.sh cse@$(cat app_public_ip): >/dev/null 2>&1
   remote_grade /home/cse/test-lab4-part1.sh
   ret=$?
-  scp cse@$(cat app_public_ip):*.log ./ >/dev/null 2>&1
-  ssh cse@$(cat app_public_ip) rm namenode datanode yfs_client lock_server extent_server test-lab4-part2.sh test-lab4-common.sh *.log >/dev/null 2>&1
+  safe_run $SCP cse@$(cat app_public_ip):*.log ./ >/dev/null 2>&1
+  safe_run $SSH cse@$(cat app_public_ip) rm namenode datanode yfs_client lock_server extent_server test-lab4-part2.sh test-lab4-common.sh *.log >/dev/null 2>&1
   exit $ret
 fi
 

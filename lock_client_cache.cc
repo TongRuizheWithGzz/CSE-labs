@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdio.h>
 #include "tprintf.h"
+#include <unistd.h>
 
 
 int lock_client_cache::last_port = 0;

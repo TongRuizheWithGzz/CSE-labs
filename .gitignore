@@ -17,3 +17,8 @@ lock_server
 /part1_tester
 /app_public_ip
 *.log
+.vscode/
+.DS_Store
+.idea/
+CMakeLists.txt
+cmake-build-debug/

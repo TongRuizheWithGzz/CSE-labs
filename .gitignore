@@ -17,3 +17,4 @@ lock_server
 /part1_tester
 /app_public_ip
 *.log
+.vscode/

@@ -183,7 +183,12 @@ import_random() {
   echo -n "Import random file into HDFS... "
   quiet dd if=/dev/urandom of=random bs=4096 count=13
   quiet $HADOOP/bin/hdfs dfs -put random /random
+  if [ $? -ne 0 ]; then
+    echo "failed"
+    return 1
+  fi
   echo "ok"
+  return 0
 }
 
 if [ -f app_public_ip ]; then
@@ -200,17 +205,18 @@ if (check_hdfs_param); then
 fi
 cleanup
 start_hdfs
-import_random
-if crash_data2; then
-  recovery_data2
-  if wait_recovery 60; then
-    if crash_data1; then
-      check_recovery
-    fi
-    crash_data2
-    recovery_data1
+if import_random; then
+  if crash_data2; then
     recovery_data2
-    check_dead
+    if wait_recovery 60; then
+      if crash_data1; then
+        check_recovery
+      fi
+      crash_data2
+      recovery_data1
+      recovery_data2
+      check_dead
+    fi
   fi
 fi
 rm -f random random.get >/dev/null 2>&1

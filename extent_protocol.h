@@ -29,7 +29,8 @@ public:
 
     enum types {
         T_DIR = 1,
-        T_FILE
+        T_FILE,
+        T_SYMLINK
     };
 
     struct attr {
@@ -61,4 +62,4 @@ operator<<(marshall &m, extent_protocol::attr a) {
     return m;
 }
 
-#endif 
+#endif

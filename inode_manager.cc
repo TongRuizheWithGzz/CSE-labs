@@ -407,23 +407,41 @@ void inode_manager::__free_nth_block(struct inode *ino, uint32_t nth) {
 }
 
 void inode_manager::append_block(uint32_t inum, blockid_t &bid) {
-
+    struct inode *ino = get_inode(inum);
+    uint32_t size = ino->size;
+    std::string empty;
+    uint32_t block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    __alloc_nth_block(ino, block_num + 1, empty, false);
+    bid = __get_nth_blockid(ino, block_num + 1);
+    free(ino);
 }
 
 void inode_manager::get_block_ids(uint32_t inum, std::list<blockid_t> &block_ids) {
-
+    struct inode *ino = get_inode(inum);
+    uint32_t size = ino->size;
+    uint32_t block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    block_ids.clear();
+    for (uint i = 0; i < block_num; i++)
+        block_ids.push_back(__get_nth_blockid(ino, i));
+    free(ino);
 }
 
 void inode_manager::read_block(blockid_t bid, char *block) {
-
+    bm->read_block(bid, block);
 }
 
 void inode_manager::write_block(blockid_t bid, const char *block) {
-
+    bm->write_block(bid, block);
 }
 
 void inode_manager::complete(uint32_t inum, uint32_t size) {
-
+    struct inode *ino = get_inode(inum);
+    ino->size = size;
+    ino->atime = (unsigned) std::time(0);
+    ino->mtime = (unsigned) std::time(0);
+    ino->ctime = (unsigned) std::time(0);
+    put_inode(inum, ino);
+    free(ino);
 }
 
 

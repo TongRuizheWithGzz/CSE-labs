@@ -51,7 +51,7 @@ public:
         unsigned short file_name_length;
     };
 
-private:
+public:
     static std::string filename(inum);
 
     static inum n2i(std::string);

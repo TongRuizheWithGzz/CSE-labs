@@ -18,3 +18,7 @@ lock_server
 /app_public_ip
 *.log
 .vscode/
+.DS_Store
+.idea/
+CMakeLists.txt
+cmake-build-debug/

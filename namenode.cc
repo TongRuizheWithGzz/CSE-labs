@@ -5,6 +5,18 @@
 #include <unistd.h>
 #include "threader.h"
 
+#define _DEBUG 1
+#define debug_log(...)                               \
+    do                                               \
+    {                                                \
+        if (_DEBUG)                                  \
+        {                                            \
+              printf("Line %d ",__LINE__);           \
+              printf(__VA_ARGS__);                   \
+        }                                            \
+        fflush(stdout);                              \
+    } while (0)
+
 using namespace std;
 
 void NameNode::init(const string &extent_dst, const string &lock_dst) {
@@ -13,15 +25,38 @@ void NameNode::init(const string &extent_dst, const string &lock_dst) {
     yfs = new yfs_client(extent_dst, lock_dst);
 
     /* Add your init logic here */
+    heart_beats = 0;
+    NewThread(this, &NameNode::beat);
+}
+
+void NameNode::beat() {
+    while (true) {
+        this->heart_beats++;
+        sleep(1);
+    }
 }
 
 list<NameNode::LocatedBlock> NameNode::GetBlockLocations(yfs_client::inum ino) {
-    return list<LocatedBlock>();
+    list<NameNode::LocatedBlock> l;
+    uint64_t size = 0;
+    list<blockid_t> block_ids;
+    ec->get_block_ids(ino, block_ids);
+    extent_protocol::attr attr;
+    ec->getattr(ino, attr);
+    unsigned i = 0;
+    for (auto item : block_ids) {
+        i++;
+        LocatedBlock lb(item, size, i < block_ids.size() ? BLOCK_SIZE : (attr.size - size), GetDatanodes());
+        l.push_back(lb);
+        size += BLOCK_SIZE;
+    }
+    return l;
 }
 
 bool NameNode::Complete(yfs_client::inum ino, uint32_t new_size) {
-    assert(ec->complete(ino, new_size));
+    assert(ec->complete(ino, new_size) == extent_protocol::OK);
     lc->release(ino);
+    return true;
 }
 
 NameNode::LocatedBlock NameNode::AppendBlock(yfs_client::inum ino) {
@@ -29,13 +64,36 @@ NameNode::LocatedBlock NameNode::AppendBlock(yfs_client::inum ino) {
     extent_protocol::attr attr;
     ec->getattr(ino, attr);
     ec->append_block(ino, bid);
-    LocatedBlock lb(bid, attr.size, (attr.size % BLOCK_SIZE) ? attr.size % BLOCK_SIZE : BLOCK_SIZE, master_datanode);
+    LocatedBlock lb(bid, attr.size, (attr.size % BLOCK_SIZE) ? attr.size % BLOCK_SIZE : BLOCK_SIZE,
+                    GetDatanodes());
+    dirty_blocks.insert(bid);
     return lb;
 }
 
-bool NameNode::Rename(yfs_client::inum src_dir_ino, string src_name, yfs_client::inum dst_dir_ino, string dst_name) {
-    bool res = !yfs->mkdir(src_dir_ino, src_name.c_str(), mode, ino_out);
+bool
+NameNode::Rename(yfs_client::inum src_dir_ino, string src_name, yfs_client::inum dst_dir_ino, string dst_name) {
+    string sbuf, dbuf;
+    bool sfound;
+    std::string append;
+    yfs_client::inum sino_out;
+    string buf;
+    yfs->__lookup_dir(src_dir_ino, src_name.c_str(), sfound, sino_out);
+
+    if (sfound) {
+        assert(yfs->rmdir(src_dir_ino, src_name.c_str()) == yfs_client::OK);
+        ec->get(dst_dir_ino, dbuf);
+
+        struct yfs_client::dir_entry new_dirent;
+        new_dirent.inum = sino_out;
+        new_dirent.file_name_length = (unsigned short) dst_name.size();
+        memcpy(new_dirent.file_name, dst_name.c_str(), new_dirent.file_name_length);
+        append.assign((char *) (&new_dirent), sizeof(struct yfs_client::dir_entry));
+        dbuf += append;
+        ec->put(dst_dir_ino, dbuf);
+    }
+    return sfound;
 }
+
 
 bool NameNode::Mkdir(yfs_client::inum parent, string name, mode_t mode, yfs_client::inum &ino_out) {
     bool result = yfs->mkdir(parent, name.c_str(), mode, ino_out) == yfs_client::OK;
@@ -99,11 +157,22 @@ bool NameNode::Unlink(yfs_client::inum parent, string name, yfs_client::inum ino
 }
 
 void NameNode::DatanodeHeartbeat(DatanodeIDProto id) {
+    data_nodes[id] = this->heart_beats;
 }
 
 void NameNode::RegisterDatanode(DatanodeIDProto id) {
+    for (auto b : dirty_blocks) {
+        ReplicateBlock(b, master_datanode, id);
+    }
+    data_nodes.insert(make_pair(id, this->heart_beats));
 }
 
 list<DatanodeIDProto> NameNode::GetDatanodes() {
-    return list<DatanodeIDProto>();
+    list<DatanodeIDProto> live_data_nodes;
+    for (auto i : data_nodes) {
+        if (i.second >= this->heart_beats - 3) {
+            live_data_nodes.push_back(i.first);
+        }
+    }
+    return live_data_nodes;
 }

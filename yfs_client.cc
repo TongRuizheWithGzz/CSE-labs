@@ -414,13 +414,10 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
 }
 
 int yfs_client::unlink(inum parent, const char *name) {
-
-    /*
-     * your code goes here.
-     * note: you should remove the file using ec->remove,
-     * and update the parent directory content.
-     */
-    return rmdir(parent, name);
+    lc->acquire(parent);
+    int result = rmdir(parent, name);
+    lc->release(parent);
+    return result;
 }
 
 int yfs_client::rmdir(inum parent, const char *name) {
@@ -428,7 +425,6 @@ int yfs_client::rmdir(inum parent, const char *name) {
     bool found = false;
 
     std::list<dir_entry> entries;
-    lc->acquire(parent);
     __list_dir(parent, entries);
 
     std::list<dir_entry>::iterator it = entries.begin();
@@ -441,10 +437,7 @@ int yfs_client::rmdir(inum parent, const char *name) {
         }
     }
 
-    if (!found) {
-        lc->release(parent);
-        return NOENT;
-    }
+    if (!found) { return NOENT; }
 
     //erase the entry
     entries.erase(it);
@@ -465,7 +458,6 @@ int yfs_client::rmdir(inum parent, const char *name) {
     }
 
     ec->put(parent, buf);
-    lc->release(parent);
     return r;
 }
 

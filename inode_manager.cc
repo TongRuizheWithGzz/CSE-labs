@@ -411,8 +411,10 @@ void inode_manager::append_block(uint32_t inum, blockid_t &bid) {
     uint32_t size = ino->size;
     std::string empty;
     uint32_t block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    __alloc_nth_block(ino, block_num + 1, empty, false);
-    bid = __get_nth_blockid(ino, block_num + 1);
+    __alloc_nth_block(ino, block_num, empty, false);
+    ino->size += BLOCK_SIZE;
+    put_inode(inum, ino);
+    bid = __get_nth_blockid(ino, block_num);
     free(ino);
 }
 

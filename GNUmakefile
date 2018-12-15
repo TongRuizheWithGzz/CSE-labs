@@ -155,7 +155,7 @@ clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d yfs_client extent_server lock_se
 clean: 
 	rm $(clean_files) -rf 
 
-handin_ignore=$(clean_files) core* *log .git
+handin_ignore=$(clean_files) core* *log .git namenode datanode libprotobuf.a
 handin_file=lab$(LAB).tgz
 labdir=$(shell basename $(PWD))
 handin: 
